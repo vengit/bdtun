@@ -1,4 +1,4 @@
-obj-m := sbd.o
+obj-m := bdtun.o
 KDIR := /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
 all:
