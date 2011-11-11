@@ -72,6 +72,11 @@ struct cdev ctrl_dev;
 // generate names for examble: bdtuna bdtunb bdtunc bdtund ...
 static struct bdtun *devices;
 
+/*
+ * Initialize device list
+ */
+LIST_HEAD(device_list);
+
 // TODO: dynamically request and create character / block device pairs
 
 // TODO: master character device for controlling devices
@@ -206,22 +211,23 @@ static struct file_operations bdtunch_ops = {
  *  Commands to manage devices
  */
 int bdtun_create(char *name, size_t size) {
-        
+        //struct bdtun *new = vmalloc(sizeof (struct bdtun));
+        // TODO: copy the current bdtun_init here.
         return 0;
 }
 
 int bdtun_remove(char *name) {
+	    // bdtun_exit comes here
         return 0;
 }
 
-struct bdtun_info *bdtun_info(char *name) {
-        return NULL;
-}
-
-void bdtun_free(struct bdtun_info* device_info) {
+int bdtun_info(char *name, struct bdtun_info *device_info) {
+	    // TODO: fill the device info based on the name
+        return 0;
 }
 
 char **bdtun_list(void) {
+	    // TODO: return device names
         return NULL;
 }
 
