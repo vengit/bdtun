@@ -51,7 +51,6 @@ struct bdtun {
         int bd_block_size;
         int bd_nsectors;
         struct request_queue *bd_queue;
-        int bd_major_num;
         u8 *bd_data;
         struct gendisk *bd_gd;
         /* bd sync stuff */
@@ -198,6 +197,7 @@ static struct file_operations bdtunch_ops = {
  */
 static int __init bdtun_init(void) {
         int error;
+        int bd_major;
         
         /*
          * Set up our internal device.
@@ -229,10 +229,10 @@ static int __init bdtun_init(void) {
         /*
          * Get registered.
          */
-        device.bd_major_num = register_blkdev(0, "bdtun");
-        if (device.bd_major_num <= 0) {
+        bd_major = register_blkdev(0, "bdtun");
+        if (bd_major <= 0) {
                 printk(KERN_WARNING "bdtun: unable to get major number\n");
-                unregister_blkdev(device.bd_major_num, "bdtun");
+                unregister_blkdev(bd_major, "bdtun");
                 vfree(device.bd_data);
                 return -ENOMEM;
         }
@@ -242,11 +242,11 @@ static int __init bdtun_init(void) {
          */
         device.bd_gd = alloc_disk(16);
         if (!device.bd_gd) {
-                unregister_blkdev(device.bd_major_num, "bdtun");
+                unregister_blkdev(bd_major, "bdtun");
                 vfree(device.bd_data);
                 return -ENOMEM;
         }
-        device.bd_gd->major = device.bd_major_num;
+        device.bd_gd->major = bd_major;
         device.bd_gd->first_minor = 0;
         device.bd_gd->fops = &bdtun_ops;
         device.bd_gd->private_data = &device;
@@ -274,14 +274,15 @@ static int __init bdtun_init(void) {
  * Clean up on module remove
  */
 static void __exit bdtun_exit(void) {
-        // Destroy vlock device
+        /* Destroy block devices */
+        printk(KERN_DEBUG "bdtun: removing block device\n");
+        unregister_blkdev(device.bd_gd->major, "bdtun");
         del_gendisk(device.bd_gd);
         put_disk(device.bd_gd);
-        unregister_blkdev(device.bd_major_num, "bdtun");
         blk_cleanup_queue(device.bd_queue);
         vfree(device.bd_data);
         
-        // Destroy character device
+        /* Destroy character devices */
         printk(KERN_DEBUG "bdtun: removing char device\n");
         cdev_del(&device.ch_dev);
         printk(KERN_NOTICE "bdtun: module shutdown finished\n");
