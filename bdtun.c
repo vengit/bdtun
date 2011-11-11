@@ -235,6 +235,11 @@ static int __init bdtun_init(void) {
         /*
          * Set up our internal device.
          */
+        devices = vmalloc(sizeof (struct bdtun));
+        if (devices == NULL) {
+                return -ENOMEM;
+        }
+        
         devices->bd_block_size = logical_block_size;
         devices->bd_nsectors   = nsectors;
         devices->bd_size       = nsectors * logical_block_size;
@@ -244,6 +249,7 @@ static int __init bdtun_init(void) {
         devices->bd_data = vmalloc(devices->bd_size);
 
         if (devices->bd_data == NULL) {
+                vfree(devices);
                 return -ENOMEM;
         }
         
@@ -254,6 +260,7 @@ static int __init bdtun_init(void) {
         
         if (devices->bd_queue == NULL) {
                 vfree(devices->bd_data);
+                vfree(devices);
                 return -ENOMEM;
         }
         
@@ -267,6 +274,7 @@ static int __init bdtun_init(void) {
                 printk(KERN_WARNING "bdtun: unable to get major number\n");
                 unregister_blkdev(bd_major, "bdtun");
                 vfree(devices->bd_data);
+                vfree(devices);
                 return -ENOMEM;
         }
         
@@ -277,6 +285,7 @@ static int __init bdtun_init(void) {
         if (!devices->bd_gd) {
                 unregister_blkdev(bd_major, "bdtun");
                 vfree(devices->bd_data);
+                vfree(devices);
                 return -ENOMEM;
         }
         devices->bd_gd->major = bd_major;
