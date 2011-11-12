@@ -55,7 +55,6 @@ struct bdtun {
         unsigned long bd_size;
         int bd_block_size;
         int bd_nsectors;
-        struct request_queue *bd_queue;
         u8 *bd_data;
         struct gendisk *bd_gd;
         /* bd sync stuff */
@@ -66,11 +65,6 @@ struct bdtun {
  * Control device
  */
 struct cdev ctrl_dev;
-
-// TODO: this stuff needs to be in a linked list.
-// TODO: in general, we needs "methods" on these kind of "objects", that
-// generate names for examble: bdtuna bdtunb bdtunc bdtund ...
-static struct bdtun *devices;
 
 /*
  * Initialize device list
@@ -128,7 +122,7 @@ static void bdtun_request(struct request_queue *q) {
                         __blk_end_request_all(req, -EIO);
                         continue;
                 }
-                bdtun_transfer(devices, blk_rq_pos(req), blk_rq_cur_sectors(req),
+                bdtun_transfer(req->rq_disk->private_data, blk_rq_pos(req), blk_rq_cur_sectors(req),
                                 req->buffer, rq_data_dir(req));
                 if ( ! __blk_end_request_cur(req, 0) ) {
                         req = blk_fetch_request(q);
@@ -136,23 +130,27 @@ static void bdtun_request(struct request_queue *q) {
         }
 }
 
-int bdtun_getgeo(struct block_device * block_device, struct hd_geometry * geo) {
+int bdtun_getgeo (struct block_device *bdev, struct hd_geometry *geo) {
         long size;
-
-        /* We have no real geometry, of course, so make something up. */
-        size = devices->bd_size * (logical_block_size / KERNEL_SECTOR_SIZE);
-        geo->cylinders = (size & ~0x3f) >> 6;
-        geo->heads = 4;
-        geo->sectors = 16;
-        geo->start = 0;
-        return 0;
+        struct bdtun *dev = bdev->bd_disk->private_data;
+        
+        /* We are a virtual device, so we have to make up something.
+         * We claim to have 16 sectors, 4 head, and the appropriate
+         * number of cylinders
+         */
+         size = dev->bd_size*(logical_block_size/KERNEL_SECTOR_SIZE);
+         geo->cylinders = (size & 0x3f) >> 6;
+         geo->heads = 4;
+         geo->sectors = 16;
+         geo->start = 0;
+         return 0;
 }
 
 /*
  * The block device operations structure.
  */
 static struct block_device_operations bdtun_ops = {
-        .owner  = THIS_MODULE,
+        .owner = THIS_MODULE,
         .getgeo = bdtun_getgeo
 };
 
@@ -208,70 +206,62 @@ static struct file_operations bdtunch_ops = {
 };
 
 /*
- *  Commands to manage devices
+ * Device list management auxilliary functions
  */
-int bdtun_create(char *name, size_t size) {
-        //struct bdtun *new = vmalloc(sizeof (struct bdtun));
-        // TODO: copy the current bdtun_init here.
-        return 0;
-}
 
-int bdtun_remove(char *name) {
-	    // bdtun_exit comes here
-        return 0;
-}
-
-int bdtun_info(char *name, struct bdtun_info *device_info) {
-	    // TODO: fill the device info based on the name
-        return 0;
-}
-
-char **bdtun_list(void) {
-	    // TODO: return device names
+struct bdtun *bdtun_find_device(char *name) {
+        struct list_head *ptr;
+        struct bdtun *entry;
+        
+        list_for_each(ptr, &device_list) {
+                entry = list_entry(ptr, struct bdtun, list);
+                if (strcmp(entry->bd_gd->disk_name, name) == 0) {
+                        return entry;
+                }
+        }
         return NULL;
 }
 
 /*
- * Initialize module
+ *  Commands to manage devices
  */
-static int __init bdtun_init(void) {
+int bdtun_create(char *name, size_t size) {
+        struct bdtun *new;
+        struct request_queue *queue;
         int error;
         int bd_major;
         
-        /*
-         * Set up our internal device.
-         */
-        devices = vmalloc(sizeof (struct bdtun));
-        if (devices == NULL) {
+        new = vmalloc(sizeof (struct bdtun));
+        if (new == NULL) {
                 return -ENOMEM;
         }
         
-        devices->bd_block_size = logical_block_size;
-        devices->bd_nsectors   = nsectors;
-        devices->bd_size       = nsectors * logical_block_size;
+        new->bd_block_size = logical_block_size;
+        new->bd_nsectors   = nsectors;
+        new->bd_size       = nsectors * logical_block_size;
         
-        spin_lock_init(&devices->bd_lock);
+        spin_lock_init(&new->bd_lock);
 
-        devices->bd_data = vmalloc(devices->bd_size);
+        new->bd_data = vmalloc(new->bd_size);
 
-        if (devices->bd_data == NULL) {
-                vfree(devices);
+        if (new->bd_data == NULL) {
+                vfree(new);
                 return -ENOMEM;
         }
         
         /*
          * Get a request queue.
          */
-        devices->bd_queue = blk_init_queue(bdtun_request, &devices->bd_lock);
+        queue = blk_init_queue(bdtun_request, &new->bd_lock);
         
-        if (devices->bd_queue == NULL) {
-                vfree(devices->bd_data);
-                vfree(devices);
+        if (queue == NULL) {
+                vfree(new->bd_data);
+                vfree(new);
                 return -ENOMEM;
         }
         
-        blk_queue_logical_block_size(devices->bd_queue, logical_block_size);
-        
+        blk_queue_logical_block_size(queue, logical_block_size);
+
         /*
          * Get registered.
          */
@@ -279,64 +269,104 @@ static int __init bdtun_init(void) {
         if (bd_major <= 0) {
                 printk(KERN_WARNING "bdtun: unable to get major number\n");
                 unregister_blkdev(bd_major, "bdtun");
-                vfree(devices->bd_data);
-                vfree(devices);
+                vfree(new->bd_data);
+                vfree(new);
                 return -ENOMEM;
         }
         
         /*
          * And the gendisk structure.
          */
-        devices->bd_gd = alloc_disk(16);
-        if (!devices->bd_gd) {
+        new->bd_gd = alloc_disk(16);
+        if (!new->bd_gd) {
                 unregister_blkdev(bd_major, "bdtun");
-                vfree(devices->bd_data);
-                vfree(devices);
+                vfree(new->bd_data);
+                vfree(new);
                 return -ENOMEM;
         }
-        devices->bd_gd->major = bd_major;
-        devices->bd_gd->first_minor = 0;
-        devices->bd_gd->fops = &bdtun_ops;
-        devices->bd_gd->private_data = devices;
-        strcpy(devices->bd_gd->disk_name, "bdtuna");
-        set_capacity(devices->bd_gd, nsectors);
-        devices->bd_gd->queue = devices->bd_queue;
-        add_disk(devices->bd_gd);
+        new->bd_gd->major = bd_major;
+        new->bd_gd->first_minor = 0;
+        new->bd_gd->fops = &bdtun_ops;
+        new->bd_gd->private_data = new;
+        strcpy(new->bd_gd->disk_name, "bdtuna");
+        set_capacity(new->bd_gd, nsectors);
+        new->bd_gd->queue = queue;
+        add_disk(new->bd_gd);
 
         /*
          * Initialize character device
          */
         printk(KERN_INFO "bdtun: setting up char device\n");
         // register character device
-        cdev_init(&devices->ch_dev, &bdtunch_ops);
-        devices->ch_dev.owner = THIS_MODULE;
-        error = cdev_add(&devices->ch_dev, MKDEV(240,0),1);
+        cdev_init(&new->ch_dev, &bdtunch_ops);
+        new->ch_dev.owner = THIS_MODULE;
+        error = cdev_add(&new->ch_dev, MKDEV(240,0),1);
         if (error) {
                 printk(KERN_NOTICE "bdtun: error setting up char device\n");
         }
+        
+        /*
+         * Add device to the list
+         */
+        list_add_tail(&new->list, &device_list);
+        
         printk(KERN_NOTICE "bdtun: module init finished\n");
         return 0;
+}
+
+int bdtun_remove(char *name) {
+        struct bdtun *dev;
+        
+        /* TODO: find block device in the list */
+        dev = bdtun_find_device(name);
+        
+        if (dev == NULL) {
+                return -ENOENT;
+        }
+        
+        /* Destroy block devices */
+        printk(KERN_DEBUG "bdtun: removing block device\n");
+        unregister_blkdev(dev->bd_gd->major, "bdtun");
+        blk_cleanup_queue(dev->bd_gd->queue);
+        del_gendisk(dev->bd_gd);
+        put_disk(dev->bd_gd);
+        vfree(dev->bd_data);
+        
+        /* Destroy character devices */
+        printk(KERN_DEBUG "bdtun: removing char device\n");
+        cdev_del(&dev->ch_dev);
+        printk(KERN_NOTICE "bdtun: device shutdown finished\n");
+        
+        /* Unlink and free device structure */
+        list_del(&dev->list);
+        vfree(dev);
+        printk(KERN_NOTICE "bdtun: device removed from list\n");
+        
+        return 0;
+}
+
+int bdtun_info(char *name, struct bdtun_info *device_info) {
+        // TODO: fill the device info based on the name
+        return 0;
+}
+
+char **bdtun_list(void) {
+        // TODO: return device names
+        return NULL;
+}
+
+/*
+ * Initialize module
+ */
+static int __init bdtun_init(void) {
+        return bdtun_create("bdtuna", 1024);
 }
 
 /*
  * Clean up on module remove
  */
 static void __exit bdtun_exit(void) {
-        /* Destroy block devices */
-        printk(KERN_DEBUG "bdtun: removing block device\n");
-        unregister_blkdev(devices->bd_gd->major, "bdtun");
-        del_gendisk(devices->bd_gd);
-        put_disk(devices->bd_gd);
-        blk_cleanup_queue(devices->bd_queue);
-        vfree(devices->bd_data);
-        
-        /* Destroy character devices */
-        printk(KERN_DEBUG "bdtun: removing char device\n");
-        cdev_del(&devices->ch_dev);
-        printk(KERN_NOTICE "bdtun: module shutdown finished\n");
-        
-        /* Free device structure */
-        vfree(devices);
+        bdtun_remove("bdtuna");
 }
 
 module_init(bdtun_init);
