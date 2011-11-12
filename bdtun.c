@@ -21,15 +21,6 @@
 
 MODULE_LICENSE("GPL");
 
-static int logical_block_size = 512;
-module_param(logical_block_size, int, 0);
-
-static int nsectors = 1024;
-module_param(nsectors, int, 0);
-
-static DECLARE_WAIT_QUEUE_HEAD(my_queue);
-int flag = 0;
-
 /*
  * BDTun device structure
  */
@@ -94,20 +85,18 @@ LIST_HEAD(device_list);
  */
 static void bdtun_transfer(struct bdtun *dev, sector_t sector,
                 unsigned long nsect, char *buffer, int write) {
-        unsigned long offset = sector * logical_block_size;
-        unsigned long nbytes = nsect * logical_block_size;
+        unsigned long offset = sector * dev->bd_block_size;
+        unsigned long nbytes = nsect * dev->bd_block_size;
 
         if ((offset + nbytes) > dev->bd_size) {
                 printk (KERN_NOTICE "sbd: Beyond-end write (%ld %ld)\n", offset, nbytes);
                 return;
         }
         if (write) {
-                flag = 1;
-                wake_up_interruptible(&my_queue);
+                // TODO: put transfer onto the queue
                 memcpy(dev->bd_data + offset, buffer, nbytes);
         } else {
-                flag = 1;
-                wake_up_interruptible(&my_queue);
+                // TODO: put transfer onto the queue
                 memcpy(buffer, dev->bd_data + offset, nbytes);
         }
 }
@@ -138,7 +127,7 @@ int bdtun_getgeo (struct block_device *bdev, struct hd_geometry *geo) {
          * We claim to have 16 sectors, 4 head, and the appropriate
          * number of cylinders
          */
-         size = dev->bd_size*(logical_block_size/KERNEL_SECTOR_SIZE);
+         size = dev->bd_size*(dev->bd_block_size/KERNEL_SECTOR_SIZE);
          geo->cylinders = (size & 0x3f) >> 6;
          geo->heads = 4;
          geo->sectors = 16;
@@ -178,8 +167,8 @@ ssize_t bdtunch_read(struct file *filp, char *buffer, size_t length, loff_t * of
         int size;
         char * data = "E!\n";
         
-        wait_event_interruptible(my_queue, flag != 0);
-        flag = 0;
+        //wait_event_interruptible(my_queue, flag != 0);
+        //flag = 0;
         printk(KERN_DEBUG "bdtun: got device_read on char dev\n");
         size = min(length, (size_t)3);
         copy_to_user(buffer, data, size);
@@ -225,7 +214,7 @@ struct bdtun *bdtun_find_device(char *name) {
 /*
  *  Commands to manage devices
  */
-int bdtun_create(char *name, size_t size) {
+int bdtun_create(char *name, int logical_block_size, size_t size) {
         struct bdtun *new;
         struct request_queue *queue;
         int error;
@@ -237,8 +226,8 @@ int bdtun_create(char *name, size_t size) {
         }
         
         new->bd_block_size = logical_block_size;
-        new->bd_nsectors   = nsectors;
-        new->bd_size       = nsectors * logical_block_size;
+        new->bd_nsectors   = size / logical_block_size; // Size is just an approximate.
+        new->bd_size       = new->bd_nsectors * logical_block_size;
         
         spin_lock_init(&new->bd_lock);
 
@@ -288,8 +277,8 @@ int bdtun_create(char *name, size_t size) {
         new->bd_gd->first_minor = 0;
         new->bd_gd->fops = &bdtun_ops;
         new->bd_gd->private_data = new;
-        strcpy(new->bd_gd->disk_name, "bdtuna");
-        set_capacity(new->bd_gd, nsectors);
+        strcpy(new->bd_gd->disk_name, name);
+        set_capacity(new->bd_gd, new->bd_nsectors);
         new->bd_gd->queue = queue;
         add_disk(new->bd_gd);
 
@@ -321,6 +310,7 @@ int bdtun_remove(char *name) {
         dev = bdtun_find_device(name);
         
         if (dev == NULL) {
+                printk(KERN_NOTICE "bdtun: no such device: %s\n", name);
                 return -ENOENT;
         }
         
@@ -359,7 +349,9 @@ char **bdtun_list(void) {
  * Initialize module
  */
 static int __init bdtun_init(void) {
-        return bdtun_create("bdtuna", 1024);
+        bdtun_create("bdtuna", 512, 1000000);
+        bdtun_create("bdtunb", 512, 10000000);
+        return 0;
 }
 
 /*
@@ -367,6 +359,8 @@ static int __init bdtun_init(void) {
  */
 static void __exit bdtun_exit(void) {
         bdtun_remove("bdtuna");
+        bdtun_remove("bdtunb");
+        bdtun_remove("bdtunc");
 }
 
 module_init(bdtun_init);
