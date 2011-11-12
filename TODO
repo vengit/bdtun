@@ -1,11 +1,4 @@
-* Finish list handling
-* Add dynamic char device allocation
 * Create master device
-* Create .h file for command structures
-  * create
-  * list
-  * info
-  * remove
 * Add command handling code into the driver
   * THREAD SAFETY!!!
 * Compile user space library

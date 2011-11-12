@@ -16,10 +16,15 @@
 #include <linux/cdev.h>
 #include <linux/wait.h>
 #include <linux/list.h>
+#include <linux/semaphore.h>
+
 
 #include "bdtun.h"
+#include "commands.h"
 
 MODULE_LICENSE("GPL");
+
+#define COMM_BUFFER_SIZE 102400
 
 /*
  * BDTun device structure
@@ -30,23 +35,30 @@ struct bdtun {
         /* character device related */
         struct cdev ch_dev;
         int ch_major;
-        int ch_minor;
-        /* Buffer for communicating with the userland driver */
-        int buffersize;
-        char *bufbegin;
-        char *bufend;
-        char *rdp;
-        char *wrp;
-        struct fasync_struct *async_queue;
+        /* Buffers for communicating with the userland driver */
+        int rq_buffersize;
+        char *rq_buffer;
+        char *rq_end;
+        char *rq_rp;
+        char *rq_wp;
+        int res_buffersize;
+        char *res_buffer;
+        char *res_end;
+        char *res_rp;
+        char *res_wp;
         /* userland sync stuff */
-        wait_queue_head_t readq;
-        wait_queue_head_t writeq;
-        struct semaphore sem;
+        int ch_client_count;
+        wait_queue_head_t rq_rqueue;
+        wait_queue_head_t rq_wqueue;
+        wait_queue_head_t res_rqueue;
+        wait_queue_head_t res_wqueue;
+        struct semaphore sem; /* semaphore for rarely modified fields */
+        struct semaphore rq_sem; /* request queue sem */
+        struct semaphore res_sem; /* response queue sem */
         /* Block device related stuff*/
         unsigned long bd_size;
         int bd_block_size;
         int bd_nsectors;
-        u8 *bd_data;
         struct gendisk *bd_gd;
         /* bd sync stuff */
         spinlock_t bd_lock;
@@ -61,8 +73,6 @@ struct cdev ctrl_dev;
  * Initialize device list
  */
 LIST_HEAD(device_list);
-
-// TODO: dynamically request and create character / block device pairs
 
 // TODO: master character device for controlling devices
 
@@ -89,15 +99,16 @@ static void bdtun_transfer(struct bdtun *dev, sector_t sector,
         unsigned long nbytes = nsect * dev->bd_block_size;
 
         if ((offset + nbytes) > dev->bd_size) {
-                printk (KERN_NOTICE "sbd: Beyond-end write (%ld %ld)\n", offset, nbytes);
+                printk (KERN_NOTICE "bdtun: Beyond-end write (%ld %ld)\n", offset, nbytes);
                 return;
         }
         if (write) {
+                
                 // TODO: put transfer onto the queue
-                memcpy(dev->bd_data + offset, buffer, nbytes);
+                //memcpy(dev->bd_data + offset, buffer, nbytes);
         } else {
                 // TODO: put transfer onto the queue
-                memcpy(buffer, dev->bd_data + offset, nbytes);
+                //memcpy(buffer, dev->bd_data + offset, nbytes);
         }
 }
 
@@ -147,41 +158,159 @@ static struct block_device_operations bdtun_ops = {
  * Character device
  */
 
-int bdtunch_open(struct inode *inode, struct file *file)
-{
-        // TODO: only allow one process, to open the device
-        printk(KERN_DEBUG "bdtun: got device_open on char dev\n");
-        return 0;
-}
-
-int bdtunch_release(struct inode *inode, struct file *file)
-{
-        printk(KERN_DEBUG "bdtun: got device_release on char dev\n");
-        return 0;
-}
-
-ssize_t bdtunch_read(struct file *filp, char *buffer, size_t length, loff_t * offset)
-{
-        // TODO: wait on a message queue that contains records of what happened with the block device
-        // TODO: if there is data, copy it to the process
-        int size;
-        char * data = "E!\n";
+int bdtunch_open(struct inode *inode, struct file *file) {
+        struct bdtun *dev = file->private_data;
         
-        //wait_event_interruptible(my_queue, flag != 0);
-        //flag = 0;
-        printk(KERN_DEBUG "bdtun: got device_read on char dev\n");
-        size = min(length, (size_t)3);
-        copy_to_user(buffer, data, size);
-        return size;
+        printk(KERN_DEBUG "bdtun: got device_open on char dev\n");
+        
+        if (down_interruptible(&dev->sem)) {
+                return -ERESTARTSYS;
+        }
+        
+        if (dev->ch_client_count > 0) {
+                return -EBUSY;
+        }
+        
+        dev->ch_client_count++;
+        
+        up(&dev->sem);
+        
+        return 0;
 }
 
-ssize_t bdtunch_write(struct file *filp, const char *buffer, size_t length, loff_t *offset)
+int bdtunch_release(struct inode *inode, struct file *file) {
+        struct bdtun *dev = file->private_data;
+        
+        printk(KERN_DEBUG "bdtun: got device_release on char dev\n");
+        
+        if (down_interruptible(&dev->sem)) {
+                return -ERESTARTSYS;
+        }
+        
+        dev->ch_client_count--;
+
+        up(&dev->sem);
+        
+        return 0;
+}
+
+ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t * f_pos) {
+        struct bdtun *dev = filp->private_data;
+        
+        printk(KERN_DEBUG "bdtun: got device_read on char dev\n");
+
+        if (down_interruptible(&dev->rq_sem)) {
+                return -ERESTARTSYS;
+        }
+
+        while (dev->rq_rp == dev->rq_wp) { /* nothing to read */
+                up(&dev->rq_sem); /* release the lock */
+                if (filp->f_flags & O_NONBLOCK) {
+                        return -EAGAIN;
+                }
+                
+                if (wait_event_interruptible(dev->rq_rqueue, (dev->rq_rp != dev->rq_wp))) {
+                        return -ERESTARTSYS; /* signal: tell the fs layer to handle it */
+                }
+                
+                /* otherwise loop, but first reacquire the lock */
+                if (down_interruptible(&dev->rq_sem)) {
+                        return -ERESTARTSYS;
+                }
+        }
+        
+        /* ok, data is there, return something */
+        
+        if (dev->rq_wp > dev->rq_rp) {
+                count = min(count, (size_t)(dev->rq_wp - dev->rq_rp));
+        } else {
+                /* the write pointer has wrapped, return data up to dev->end */
+                count = min(count, (size_t)(dev->rq_end - dev->rq_rp));
+        }
+        
+        if (copy_to_user(buf, dev->rq_rp, count)) {
+                up (&dev->rq_sem);
+                return -EFAULT;
+        }
+        
+        dev->rq_rp += count;
+        
+        if (dev->rq_rp == dev->rq_end) {
+                dev->rq_rp = dev->rq_buffer; /* wrapped */
+        }
+        
+        up (&dev->rq_sem);
+        
+        /* finally, awake any writers and return */
+        wake_up_interruptible(&dev->rq_wqueue);
+        
+        return count;
+}
+
+/* How much space is free? */
+static int bdtunch_res_spacefree(struct bdtun *dev)
 {
-        // TODO: put answer into the queue
-        // TODO: enaugh concurrency-safety to take advantage
-        // of possible master-slave backends (async read / writes)
-        printk(KERN_DEBUG "bdtun: got device_write on char dev\n");
-        return length;
+        if (dev->res_rp == dev->res_wp)
+                return dev->res_buffersize - 1;
+        return ((dev->res_rp + dev->res_buffersize - dev->res_wp) % dev->res_buffersize) - 1;
+}
+
+/*
+ * Wait for space for writing; caller must hold device semaphore.  On
+ * error the semaphore will be released before returning.
+ */
+static int bdtunch_getwritespace(struct bdtun *dev, struct file *filp)
+{
+        while (bdtunch_res_spacefree(dev) == 0) { /* full */
+                DEFINE_WAIT(wait);
+                
+                up(&dev->res_sem);
+                if (filp->f_flags & O_NONBLOCK)
+                        return -EAGAIN;
+                prepare_to_wait(&dev->res_wqueue, &wait, TASK_INTERRUPTIBLE);
+                if (bdtunch_res_spacefree(dev) == 0)
+                        schedule();
+                finish_wait(&dev->res_wqueue, &wait);
+                if (signal_pending(current))
+                        return -ERESTARTSYS; /* signal: tell the fs layer to handle it */
+                if (down_interruptible(&dev->sem))
+                        return -ERESTARTSYS;
+        }
+        return 0;
+}
+
+ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, loff_t *offset) {
+        struct bdtun *dev = filp->private_data;
+        int result;
+ 
+        if (down_interruptible(&dev->res_sem)) {
+                return -ERESTARTSYS;
+        }
+
+        /* Make sure there's space to write */
+        result = bdtunch_getwritespace(dev, filp);
+        if (result)
+                return result; /* scull_getwritespace called up(&dev->sem) */
+
+        /* ok, space is there, accept something */
+        count = min(count, (size_t)bdtunch_res_spacefree(dev));
+        if (dev->res_wp >= dev->res_rp)
+                count = min(count, (size_t)(dev->res_end - dev->res_wp)); /* to end-of-buf */
+        else /* the write pointer has wrapped, fill up to rp-1 */
+                count = min(count, (size_t)(dev->res_rp - dev->res_wp - 1));
+        if (copy_from_user(dev->res_wp, buf, count)) {
+                up (&dev->sem);
+                return -EFAULT;
+        }
+        dev->res_wp += count;
+        if (dev->res_wp == dev->res_end)
+                dev->res_wp = dev->res_buffer; /* wrapped */
+        up(&dev->res_sem);
+
+        /* finally, awake any reader */
+        wake_up_interruptible(&dev->res_rqueue);  /* blocked in read() and select() */
+
+        return count;
 }
 
 /*
@@ -219,24 +348,53 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         struct request_queue *queue;
         int error;
         int bd_major;
+        int ch_major;
+        char charname[512];
         
+        /*
+         * Set up character device name
+         */
+        strncpy(charname, name, 508);
+        strcat(charname, "_tun");
+        
+        /*
+         * Allocate device structure
+         */
         new = vmalloc(sizeof (struct bdtun));
         if (new == NULL) {
                 return -ENOMEM;
         }
         
+        /*
+         * Allocate the communication buffer
+         */
+        new->rq_buffersize = COMM_BUFFER_SIZE;
+        new->rq_buffer = vmalloc(COMM_BUFFER_SIZE);
+        
+        if (new->rq_buffer == NULL) {
+                vfree(new);
+                return -ENOMEM;
+        }
+        
+        new->rq_end = new->rq_buffer;
+        new->rq_wp  = new->rq_buffer;
+        new->rq_rp  = new->rq_buffer;
+        
+        new->ch_client_count = 0;
+        
+        /*
+         * Determine device size
+         */
         new->bd_block_size = logical_block_size;
         new->bd_nsectors   = size / logical_block_size; // Size is just an approximate.
         new->bd_size       = new->bd_nsectors * logical_block_size;
         
+        /*
+         * Locks, stuff like that 
+         */
         spin_lock_init(&new->bd_lock);
-
-        new->bd_data = vmalloc(new->bd_size);
-
-        if (new->bd_data == NULL) {
-                vfree(new);
-                return -ENOMEM;
-        }
+        sema_init(&new->rq_sem, 1);
+        sema_init(&new->res_sem, 1);
         
         /*
          * Get a request queue.
@@ -244,7 +402,7 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         queue = blk_init_queue(bdtun_request, &new->bd_lock);
         
         if (queue == NULL) {
-                vfree(new->bd_data);
+                vfree(new->rq_buffer);
                 vfree(new);
                 return -ENOMEM;
         }
@@ -258,7 +416,7 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         if (bd_major <= 0) {
                 printk(KERN_WARNING "bdtun: unable to get major number\n");
                 unregister_blkdev(bd_major, "bdtun");
-                vfree(new->bd_data);
+                vfree(new->rq_buffer);
                 vfree(new);
                 return -ENOMEM;
         }
@@ -269,7 +427,7 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         new->bd_gd = alloc_disk(16);
         if (!new->bd_gd) {
                 unregister_blkdev(bd_major, "bdtun");
-                vfree(new->bd_data);
+                vfree(new->rq_buffer);
                 vfree(new);
                 return -ENOMEM;
         }
@@ -286,10 +444,18 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
          * Initialize character device
          */
         printk(KERN_INFO "bdtun: setting up char device\n");
+        if (alloc_chrdev_region(&ch_major, 0, 1, charname) != 0) {
+                printk(KERN_WARNING "bdtun: could not allocate character device number\n");
+                unregister_blkdev(bd_major, "bdtun");
+                vfree(new->rq_buffer);
+                vfree(new);
+                return -ENOMEM;
+        }
+        new->ch_major = ch_major;
         // register character device
         cdev_init(&new->ch_dev, &bdtunch_ops);
         new->ch_dev.owner = THIS_MODULE;
-        error = cdev_add(&new->ch_dev, MKDEV(240,0),1);
+        error = cdev_add(&new->ch_dev, MKDEV(ch_major,0),1);
         if (error) {
                 printk(KERN_NOTICE "bdtun: error setting up char device\n");
         }
@@ -310,7 +476,7 @@ int bdtun_remove(char *name) {
         dev = bdtun_find_device(name);
         
         if (dev == NULL) {
-                printk(KERN_NOTICE "bdtun: no such device: %s\n", name);
+                printk(KERN_NOTICE "bdtun: error removing '%s': no such device\n", name);
                 return -ENOENT;
         }
         
@@ -320,15 +486,16 @@ int bdtun_remove(char *name) {
         blk_cleanup_queue(dev->bd_gd->queue);
         del_gendisk(dev->bd_gd);
         put_disk(dev->bd_gd);
-        vfree(dev->bd_data);
         
         /* Destroy character devices */
         printk(KERN_DEBUG "bdtun: removing char device\n");
+        unregister_chrdev_region(dev->ch_major, 1);
         cdev_del(&dev->ch_dev);
         printk(KERN_NOTICE "bdtun: device shutdown finished\n");
         
         /* Unlink and free device structure */
         list_del(&dev->list);
+        vfree(dev->rq_buffer);
         vfree(dev);
         printk(KERN_NOTICE "bdtun: device removed from list\n");
         
@@ -360,7 +527,6 @@ static int __init bdtun_init(void) {
 static void __exit bdtun_exit(void) {
         bdtun_remove("bdtuna");
         bdtun_remove("bdtunb");
-        bdtun_remove("bdtunc");
 }
 
 module_init(bdtun_init);
