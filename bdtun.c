@@ -110,31 +110,31 @@ void bdtun_do_work(struct work_struct *work) {
         //return NULL;
         struct bdtun_work *w = container_of(work, struct bdtun_work, work);
         printk(KERN_INFO "bdtun: doing some work, write(%d). But dunno what. Meh.\n", w->write);
+        // OMG should we do thes here???
+        // There was a freeze, but after commenting out, it remained.
+        kfree(w);
 }
 
 /*
  * Handle an I/O request.
  */
-static void bdtun_transfer(struct bdtun *dev, sector_t sector,
-                unsigned long nsect, char *buffer, int write) {
+static int bdtun_transfer(struct bdtun *dev, unsigned long offset, unsigned long nbytes, char *buffer, int write) {
+        struct bdtun_work *w = kmalloc(sizeof(struct bdtun_work), GFP_ATOMIC);
         
-        unsigned long offset = sector * dev->bd_block_size;
-        unsigned long nbytes = nsect * dev->bd_block_size;
+        if (!w) {
+                return -EIO;
+        }
         
-        struct bdtun_work *w = vmalloc(sizeof(struct bdtun_work));
-        // TODO: what if no memory?
         INIT_WORK(&w->work, bdtun_do_work);
         w->write = write;
-
+        
         if ((offset + nbytes) > dev->bd_size) {
                 printk (KERN_NOTICE "bdtun: Beyond-end write (%ld %ld)\n", offset, nbytes);
-                vfree(w);
-                return;
+                kfree(w);
+                return -EIO;
         }
         
         queue_work(dev->wq, &w->work);
-        
-        //vfree(w);
         
         //if (write) {
                 // TODO: put transfer onto the queue
@@ -143,33 +143,43 @@ static void bdtun_transfer(struct bdtun *dev, sector_t sector,
                 // TODO: put transfer onto the queue
                 //memcpy(buffer, dev->bd_data + offset, nbytes);
         //}
-}
-
-static void bdtun_request(struct request_queue *q) {
-        struct request *req;
-
-        req = blk_fetch_request(q);
-        while (req != NULL) {
-                if (req == NULL || (req->cmd_type != REQ_TYPE_FS)) {
-                        printk (KERN_NOTICE "Skip non-FS request\n");
-                        __blk_end_request_all(req, -EIO);
-                        continue;
-                }
-                // TODO: add the work to the work queue
-                bdtun_transfer(req->rq_disk->private_data, blk_rq_pos(req), blk_rq_cur_sectors(req),
-                                req->buffer, rq_data_dir(req));
-                if ( ! __blk_end_request_cur(req, 0) ) {
-                        req = blk_fetch_request(q);
-                }
-        }
-}
-
-/* TODO: see if this improves throughput
-int bdtun_make_request(struct request_queue *q, struct bio *bio) {
-        // Ha kész: bio_endbio(bio, 1123  <- bytes, 0);
         return 0;
-} */
+}
 
+/*
+ * Transfer one bio structure 
+ */
+static int bdtun_xfer_bio(struct bdtun *dev, struct bio *bio) {
+        int i;
+        struct bio_vec *bvec;
+        unsigned long offset = bio->bi_sector << 9;
+        
+        bio_for_each_segment(bvec, bio, i) {
+                char *buffer = __bio_kmap_atomic(bio, i, KM_USER0);
+                bdtun_transfer(dev, offset, bio_cur_bytes(bio), buffer, bio_data_dir(bio) == WRITE);
+                offset += bio_cur_bytes(bio);
+                __bio_kunmap_atomic(bio, KM_USER0);
+        }
+        
+        return 0;
+}
+
+/*
+ * Request processing
+ */
+int bdtun_make_request(struct request_queue *q, struct bio *bio) {
+        struct bdtun *dev = q->queuedata;
+        int status;
+        
+        status = bdtun_xfer_bio(dev, bio);
+        bio_endio(bio, status);
+        
+        return 0;
+}
+
+/*
+ *  Get the "drive geometry"
+ */
 int bdtun_getgeo (struct block_device *bdev, struct hd_geometry *geo) {
         long size;
         struct bdtun *dev = bdev->bd_disk->private_data;
@@ -415,8 +425,7 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         new->rq_buffer = vmalloc(COMM_BUFFER_SIZE);
         
         if (new->rq_buffer == NULL) {
-                vfree(new);
-                return -ENOMEM;
+                goto vfree;
         }
         
         new->rq_end = new->rq_buffer;
@@ -444,20 +453,19 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
          */        
         new->wq = alloc_workqueue(qname, 0, 0);
         if (!new->wq) {
-                vfree(new);
-                return -ENOMEM;
-		}
+                goto vfree_rqbuf;
+        }
         
         /*
          * Get a request queue.
          */
-        queue = blk_init_queue(bdtun_request, &new->bd_lock);
-        
+        queue = blk_alloc_queue(GFP_KERNEL);
+        if (!queue) {
+        }
+        blk_queue_make_request(queue, bdtun_make_request);
+
         if (queue == NULL) {
-			    destroy_workqueue(new->wq);
-                vfree(new->rq_buffer);
-                vfree(new);
-                return -ENOMEM;
+                goto vfree_wq;
         }
         
         blk_queue_logical_block_size(queue, logical_block_size);
@@ -468,11 +476,7 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         bd_major = register_blkdev(0, "bdtun");
         if (bd_major <= 0) {
                 printk(KERN_WARNING "bdtun: unable to get major number\n");
-                unregister_blkdev(bd_major, "bdtun");
-			    destroy_workqueue(new->wq);
-                vfree(new->rq_buffer);
-                vfree(new);
-                return -ENOMEM;
+                goto vfree_wq_unreg;
         }
         
         /*
@@ -480,11 +484,7 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
          */
         new->bd_gd = alloc_disk(16);
         if (!new->bd_gd) {
-                unregister_blkdev(bd_major, "bdtun");
-			    destroy_workqueue(new->wq);
-                vfree(new->rq_buffer);
-                vfree(new);
-                return -ENOMEM;
+                goto vfree_wq_unreg;
         }
         new->bd_gd->major = bd_major;
         new->bd_gd->first_minor = 0;
@@ -501,11 +501,7 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         printk(KERN_INFO "bdtun: setting up char device\n");
         if (alloc_chrdev_region(&ch_major, 0, 1, charname) != 0) {
                 printk(KERN_WARNING "bdtun: could not allocate character device number\n");
-                unregister_blkdev(bd_major, "bdtun");
-			    destroy_workqueue(new->wq);
-                vfree(new->rq_buffer);
-                vfree(new);
-                return -ENOMEM;
+                goto vfree_wq_unreg;
         }
         new->ch_major = ch_major;
         // register character device
@@ -514,6 +510,7 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         error = cdev_add(&new->ch_dev, MKDEV(ch_major,0),1);
         if (error) {
                 printk(KERN_NOTICE "bdtun: error setting up char device\n");
+                goto vfree_wq_unreg;
         }
         
         /*
@@ -523,6 +520,21 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         
         printk(KERN_NOTICE "bdtun: module init finished\n");
         return 0;
+        
+        /*
+         * "catch exceptions"
+         */
+        vfree_wq_unreg:
+                unregister_blkdev(bd_major, "bdtun");
+        vfree_wq:
+                destroy_workqueue(new->wq);
+        vfree_rqbuf:
+                vfree(new->rq_buffer);
+        vfree:
+                vfree(new);
+                return -ENOMEM;
+
+        
 }
 
 int bdtun_remove(char *name) {
