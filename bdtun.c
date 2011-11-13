@@ -56,6 +56,7 @@ struct bdtun {
         struct semaphore rq_sem; /* request queue sem */
         struct semaphore res_sem; /* response queue sem */
         struct workqueue_struct *wq;
+        struct work_struct work;
         /* Block device related stuff*/
         unsigned long bd_size;
         int bd_block_size;
@@ -113,15 +114,12 @@ static void bdtun_transfer(struct bdtun *dev, sector_t sector,
         
         unsigned long offset = sector * dev->bd_block_size;
         unsigned long nbytes = nsect * dev->bd_block_size;
-        struct work_struct *work = NULL;
-        //struct workparams *wp;
 
         if ((offset + nbytes) > dev->bd_size) {
                 printk (KERN_NOTICE "bdtun: Beyond-end write (%ld %ld)\n", offset, nbytes);
                 return;
         }
-        INIT_WORK(work, bdtun_do_work);
-        queue_work(dev->wq, work);
+        //queue_work(dev->wq, work);
         if (write) {
                 // TODO: put transfer onto the queue
                 //memcpy(dev->bd_data + offset, buffer, nbytes);
@@ -137,7 +135,7 @@ static void bdtun_request(struct request_queue *q) {
         req = blk_fetch_request(q);
         while (req != NULL) {
                 if (req == NULL || (req->cmd_type != REQ_TYPE_FS)) {
-                        printk (KERN_NOTICE "Skip non-CMD request\n");
+                        printk (KERN_NOTICE "Skip non-FS request\n");
                         __blk_end_request_all(req, -EIO);
                         continue;
                 }
@@ -424,7 +422,13 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         spin_lock_init(&new->bd_lock);
         sema_init(&new->rq_sem, 1);
         sema_init(&new->res_sem, 1);
-        new->wq = create_workqueue(qname);
+        
+        INIT_WORK(&new->work, bdtun_do_work);
+        new->wq = alloc_workqueue(qname, 0, 0);
+        if (!new->wq) {
+                vfree(new);
+                return -ENOMEM;
+		}
         
         /*
          * Get a request queue.
@@ -432,6 +436,7 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         queue = blk_init_queue(bdtun_request, &new->bd_lock);
         
         if (queue == NULL) {
+			    destroy_workqueue(new->wq);
                 vfree(new->rq_buffer);
                 vfree(new);
                 return -ENOMEM;
@@ -446,6 +451,7 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         if (bd_major <= 0) {
                 printk(KERN_WARNING "bdtun: unable to get major number\n");
                 unregister_blkdev(bd_major, "bdtun");
+			    destroy_workqueue(new->wq);
                 vfree(new->rq_buffer);
                 vfree(new);
                 return -ENOMEM;
@@ -457,6 +463,7 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         new->bd_gd = alloc_disk(16);
         if (!new->bd_gd) {
                 unregister_blkdev(bd_major, "bdtun");
+			    destroy_workqueue(new->wq);
                 vfree(new->rq_buffer);
                 vfree(new);
                 return -ENOMEM;
@@ -477,6 +484,7 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         if (alloc_chrdev_region(&ch_major, 0, 1, charname) != 0) {
                 printk(KERN_WARNING "bdtun: could not allocate character device number\n");
                 unregister_blkdev(bd_major, "bdtun");
+			    destroy_workqueue(new->wq);
                 vfree(new->rq_buffer);
                 vfree(new);
                 return -ENOMEM;
