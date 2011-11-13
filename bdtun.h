@@ -3,4 +3,5 @@
  */
 struct bdtun_info {
         char *name;
+        size_t capacity;
 };

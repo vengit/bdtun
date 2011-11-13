@@ -17,7 +17,7 @@
 #include <linux/wait.h>
 #include <linux/list.h>
 #include <linux/semaphore.h>
-
+#include <linux/workqueue.h>
 
 #include "bdtun.h"
 #include "commands.h"
@@ -55,6 +55,7 @@ struct bdtun {
         struct semaphore sem; /* semaphore for rarely modified fields */
         struct semaphore rq_sem; /* request queue sem */
         struct semaphore res_sem; /* response queue sem */
+        struct workqueue_struct *wq;
         /* Block device related stuff*/
         unsigned long bd_size;
         int bd_block_size;
@@ -62,6 +63,10 @@ struct bdtun {
         struct gendisk *bd_gd;
         /* bd sync stuff */
         spinlock_t bd_lock;
+};
+
+struct workparams {
+        int write;
 };
 
 /*
@@ -91,19 +96,33 @@ LIST_HEAD(device_list);
 #define KERNEL_SECTOR_SIZE 512
 
 /*
+ * Do the work: process an I/O request async. 
+ */
+void bdtun_do_work(struct work_struct *work) {
+        //struct workparams *params = data;
+        //printk(KERN_INFO "bdtun: doing work, write(%d)\n", params->write);
+        //return NULL;
+        printk(KERN_INFO "bdtun: doing some work. But dunno what. Meh.\n");
+}
+
+/*
  * Handle an I/O request.
  */
 static void bdtun_transfer(struct bdtun *dev, sector_t sector,
                 unsigned long nsect, char *buffer, int write) {
+        
         unsigned long offset = sector * dev->bd_block_size;
         unsigned long nbytes = nsect * dev->bd_block_size;
+        struct work_struct *work = NULL;
+        //struct workparams *wp;
 
         if ((offset + nbytes) > dev->bd_size) {
                 printk (KERN_NOTICE "bdtun: Beyond-end write (%ld %ld)\n", offset, nbytes);
                 return;
         }
+        INIT_WORK(work, bdtun_do_work);
+        queue_work(dev->wq, work);
         if (write) {
-                
                 // TODO: put transfer onto the queue
                 //memcpy(dev->bd_data + offset, buffer, nbytes);
         } else {
@@ -122,6 +141,7 @@ static void bdtun_request(struct request_queue *q) {
                         __blk_end_request_all(req, -EIO);
                         continue;
                 }
+                // TODO: create a work queue
                 bdtun_transfer(req->rq_disk->private_data, blk_rq_pos(req), blk_rq_cur_sectors(req),
                                 req->buffer, rq_data_dir(req));
                 if ( ! __blk_end_request_cur(req, 0) ) {
@@ -129,6 +149,12 @@ static void bdtun_request(struct request_queue *q) {
                 }
         }
 }
+
+/* TODO: see if this improves throughput
+int bdtun_make_request(struct request_queue *q, struct bio *bio) {
+        // Ha kész: bio_endbio(bio, 1123  <- bytes, 0);
+        return 0;
+} */
 
 int bdtun_getgeo (struct block_device *bdev, struct hd_geometry *geo) {
         long size;
@@ -349,13 +375,16 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         int error;
         int bd_major;
         int ch_major;
-        char charname[512];
+        char charname[36];
+        char qname[34];
         
         /*
-         * Set up character device name
+         * Set up character device and workqueue name
          */
-        strncpy(charname, name, 508);
+        strncpy(charname, name, 32);
         strcat(charname, "_tun");
+        strncpy(qname, name, 32);
+        strcat(charname, "_q");
         
         /*
          * Allocate device structure
@@ -395,6 +424,7 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         spin_lock_init(&new->bd_lock);
         sema_init(&new->rq_sem, 1);
         sema_init(&new->res_sem, 1);
+        new->wq = create_workqueue(qname);
         
         /*
          * Get a request queue.
@@ -472,7 +502,6 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
 int bdtun_remove(char *name) {
         struct bdtun *dev;
         
-        /* TODO: find block device in the list */
         dev = bdtun_find_device(name);
         
         if (dev == NULL) {
@@ -486,6 +515,10 @@ int bdtun_remove(char *name) {
         blk_cleanup_queue(dev->bd_gd->queue);
         del_gendisk(dev->bd_gd);
         put_disk(dev->bd_gd);
+        
+        /* Get rid of the work queue */
+        flush_workqueue(dev->wq);
+        destroy_workqueue(dev->wq);
         
         /* Destroy character devices */
         printk(KERN_DEBUG "bdtun: removing char device\n");
@@ -503,13 +536,31 @@ int bdtun_remove(char *name) {
 }
 
 int bdtun_info(char *name, struct bdtun_info *device_info) {
-        // TODO: fill the device info based on the name
+        struct bdtun *dev = bdtun_find_device(name);
+        strncpy(device_info->name, name, 32);
+        device_info->capacity = dev->bd_size;
         return 0;
 }
 
-char **bdtun_list(void) {
-        // TODO: return device names
-        return NULL;
+void bdtun_list(char **ptrs, int offset, int maxdevices) {
+        struct list_head *ptr;
+        struct bdtun *entry;
+        int i;
+        
+        memset(ptrs, 0, maxdevices);
+        i = 0;
+        list_for_each(ptr, &device_list) {
+                if (offset > 0) {
+                        offset--;
+                        continue;
+                }
+                if (i >= maxdevices) {
+                        break;
+                }
+                entry = list_entry(ptr, struct bdtun, list);
+                ptrs[i] = entry->bd_gd->disk_name;
+                i++;
+        }
 }
 
 /*
