@@ -27,6 +27,29 @@ MODULE_LICENSE("GPL");
 #define COMM_BUFFER_SIZE 102400
 
 /*
+ * A work item for our work queue.
+ * We need a work queue to get the bio-s out of
+ * the interrupt context, and be able to sleep
+ * while processing them.
+ */
+struct bdtun_work {
+        struct bio *bio;
+        struct bdtun *dev;
+        struct work_struct work;        
+};
+
+/*
+ * A list in wich unprocessed bio-s are contained. The work items
+ * in the work queue put bio-s into these list items and chain them
+ * up to form a linked list. The list is processed upon reads and writes
+ * on the char device. 
+ */
+struct bdtun_bio_list_entry {
+        struct list_head list;
+        struct bio *bio;
+};
+
+/*
  * BDTun device structure
  */
 struct bdtun {
@@ -37,27 +60,13 @@ struct bdtun {
         struct cdev ch_dev;
         int ch_major;
         
-        /* Buffers for communicating with the userland driver */
-        int rq_buffersize;
-        char *rq_buffer;
-        char *rq_end;
-        char *rq_rp;
-        char *rq_wp;
-        int res_buffersize;
-        char *res_buffer;
-        char *res_end;
-        char *res_rp;
-        char *res_wp;
+        struct list_head bio_list;
+        wait_queue_head_t bio_list_queue;
+        struct semaphore bio_list_queue_sem;
         
         /* userland sync stuff */
         int ch_client_count;
-        wait_queue_head_t rq_rqueue;
-        wait_queue_head_t rq_wqueue;
-        wait_queue_head_t res_rqueue;
-        wait_queue_head_t res_wqueue;
         struct semaphore sem; /* semaphore for rarely modified fields */
-        struct semaphore rq_sem; /* request queue sem */
-        struct semaphore res_sem; /* response queue sem */
         struct workqueue_struct *wq;
 
         /* Block device related stuff*/
@@ -65,11 +74,6 @@ struct bdtun {
         int bd_block_size;
         int bd_nsectors;
         struct gendisk *bd_gd;
-};
-
-struct bdtun_work {
-        struct bio *bio;
-        struct work_struct work;        
 };
 
 /*
@@ -81,8 +85,6 @@ struct cdev ctrl_dev;
  * Initialize device list
  */
 LIST_HEAD(device_list);
-
-// TODO: master character device for controlling devices
 
 /*
  * TODO: master device commands
@@ -100,64 +102,35 @@ LIST_HEAD(device_list);
 
 /*
  * Do the work: process an I/O request async. 
+ * Put this bio into a linked list, so the char device can pick them up.
  */
 static void bdtun_do_work(struct work_struct *work) {
         struct bdtun_work *w = container_of(work, struct bdtun_work, work);
-        printk(KERN_INFO "bdtun: doing some work, but dunno what. Meh.\n");
+        
+        // Constant TODO: We need to free this. Check twice. Seriously.
+        struct bdtun_bio_list_entry *new = vmalloc(sizeof(struct bdtun_bio_list_entry));
+        
+        if (!new) {
+                // TODO: is this right? Test with || 1
+                bio_endio(w->bio, -EIO);
+                kfree(w);
+                return;
+        }
+        
+        // TODO: we will need to look bio-s up very frequently, so we
+        // better use some pointer-like stuff to identify bio-s even
+        // (or especially) towards the charater device.
+        
+        while(down_interruptible(&w->dev->bio_list_queue_sem) != 0);
+        list_add_tail(&new->list, &w->dev->bio_list);
+        up(&w->dev->bio_list_queue_sem);
+        
         // TODO: need to grab a lock here maybe?
-        bio_endio(w->bio, 0);
+        // bio_endio(w->bio, 0);
+        
         // TODO: It Seeeeems ok to do this here. Find out is it really ok.
         kfree(w);
 }
-
-/*
- * Handle an I/O request.
- */
-/*static int bdtun_transfer(struct bdtun *dev, unsigned long offset, unsigned long nbytes, char *buffer, int write) {
-        struct bdtun_work *w = kmalloc(sizeof(struct bdtun_work), GFP_ATOMIC);
-        
-        if (!w) {
-                return -EIO;
-        }
-        
-        INIT_WORK(&w->work, bdtun_do_work);
-        w->write = write;
-        
-        if ((offset + nbytes) > dev->bd_size) {
-                printk (KERN_NOTICE "bdtun: Beyond-end write (%ld %ld)\n", offset, nbytes);
-                kfree(w);
-                return -EIO;
-        }
-        
-        queue_work(dev->wq, &w->work);
-        
-        //if (write) {
-                // TODO: put transfer onto the queue
-                //memcpy(dev->bd_data + offset, buffer, nbytes);
-        //} else {
-                // TODO: put transfer onto the queue
-                //memcpy(buffer, dev->bd_data + offset, nbytes);
-        //}
-        return 0;
-}*/
-
-/*
- * Transfer one bio structure 
- */
-/*static int bdtun_xfer_bio(struct bdtun *dev, struct bio *bio) {
-        //int i;
-        //struct bio_vec *bvec;
-        //unsigned long offset = bio->bi_sector << 9;
-        
-        //bio_for_each_segment(bvec, bio, i) {
-                //char *buffer = __bio_kmap_atomic(bio, i, KM_USER0);
-                //bdtun_transfer(dev, offset, bio_cur_bytes(bio), buffer, bio_data_dir(bio) == WRITE);
-                //offset += bio_cur_bytes(bio);
-                //__bio_kunmap_atomic(bio, KM_USER0);
-        //}
-        
-        return 0;
-}*/
 
 /*
  * Request processing
@@ -173,7 +146,10 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
         }
         
         INIT_WORK(&w->work, bdtun_do_work);
+        
         w->bio = bio;
+        w->dev = dev;
+        
         queue_work(dev->wq, &w->work);
         
         return 0;
@@ -246,123 +222,54 @@ static int bdtunch_release(struct inode *inode, struct file *file) {
         return 0;
 }
 
-static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t * f_pos) {
+/*
+ * Takes a bio, and sends it to the char device.
+ * We don't know if the bio will complete at this point.
+ * Writes to the char device will complete the bio-s.
+ */
+static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *f_pos) {
         struct bdtun *dev = filp->private_data;
+        int res;
         
         printk(KERN_DEBUG "bdtun: got device_read on char dev\n");
-
-        if (down_interruptible(&dev->rq_sem)) {
+        
+        if (down_interruptible(&dev->bio_list_queue_sem)) {
                 return -ERESTARTSYS;
         }
-
-        while (dev->rq_rp == dev->rq_wp) { /* nothing to read */
-                up(&dev->rq_sem); /* release the lock */
-                if (filp->f_flags & O_NONBLOCK) {
-                        return -EAGAIN;
-                }
-                
-                if (wait_event_interruptible(dev->rq_rqueue, (dev->rq_rp != dev->rq_wp))) {
-                        return -ERESTARTSYS; /* signal: tell the fs layer to handle it */
-                }
-                
-                /* otherwise loop, but first reacquire the lock */
-                if (down_interruptible(&dev->rq_sem)) {
-                        return -ERESTARTSYS;
-                }
-        }
         
-        /* ok, data is there, return something */
+        // Testing: write something silly
+        res = min((int)count, 3);
+        memcpy(buf, "E!\n", res);
         
-        if (dev->rq_wp > dev->rq_rp) {
-                count = min(count, (size_t)(dev->rq_wp - dev->rq_rp));
-        } else {
-                /* the write pointer has wrapped, return data up to dev->end */
-                count = min(count, (size_t)(dev->rq_end - dev->rq_rp));
-        }
+        printk(KERN_DEBUG "bdtun: sent something to the char device.\n");
         
-        if (copy_to_user(buf, dev->rq_rp, count)) {
-                up (&dev->rq_sem);
-                return -EFAULT;
-        }
+        // TODO: we will need to queue the sent bio-s in a
+        // different list.
         
-        dev->rq_rp += count;
+        // TODO: we need to signal that somethin is in the queue.
+        // perhaps an other semafor? reader-writer stuff how-to needed.
         
-        if (dev->rq_rp == dev->rq_end) {
-                dev->rq_rp = dev->rq_buffer; /* wrapped */
-        }
+        up(&dev->bio_list_queue_sem);
         
-        up (&dev->rq_sem);
-        
-        /* finally, awake any writers and return */
-        wake_up_interruptible(&dev->rq_wqueue);
-        
-        return count;
-}
-
-/* How much space is free? */
-static int bdtunch_res_spacefree(struct bdtun *dev)
-{
-        if (dev->res_rp == dev->res_wp)
-                return dev->res_buffersize - 1;
-        return ((dev->res_rp + dev->res_buffersize - dev->res_wp) % dev->res_buffersize) - 1;
-}
-
-/*
- * Wait for space for writing; caller must hold device semaphore.  On
- * error the semaphore will be released before returning.
- */
-static int bdtunch_getwritespace(struct bdtun *dev, struct file *filp)
-{
-        while (bdtunch_res_spacefree(dev) == 0) { /* full */
-                DEFINE_WAIT(wait);
-                
-                up(&dev->res_sem);
-                if (filp->f_flags & O_NONBLOCK)
-                        return -EAGAIN;
-                prepare_to_wait(&dev->res_wqueue, &wait, TASK_INTERRUPTIBLE);
-                if (bdtunch_res_spacefree(dev) == 0)
-                        schedule();
-                finish_wait(&dev->res_wqueue, &wait);
-                if (signal_pending(current))
-                        return -ERESTARTSYS; /* signal: tell the fs layer to handle it */
-                if (down_interruptible(&dev->sem))
-                        return -ERESTARTSYS;
-        }
         return 0;
 }
 
 static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, loff_t *offset) {
         struct bdtun *dev = filp->private_data;
-        int result;
- 
-        if (down_interruptible(&dev->res_sem)) {
+        struct bdtun_bio_list_entry *entry;
+        
+        if (down_interruptible(&dev->bio_list_queue_sem)) {
                 return -ERESTARTSYS;
         }
-
-        /* Make sure there's space to write */
-        result = bdtunch_getwritespace(dev, filp);
-        if (result)
-                return result; /* scull_getwritespace called up(&dev->sem) */
-
-        /* ok, space is there, accept something */
-        count = min(count, (size_t)bdtunch_res_spacefree(dev));
-        if (dev->res_wp >= dev->res_rp)
-                count = min(count, (size_t)(dev->res_end - dev->res_wp)); /* to end-of-buf */
-        else /* the write pointer has wrapped, fill up to rp-1 */
-                count = min(count, (size_t)(dev->res_rp - dev->res_wp - 1));
-        if (copy_from_user(dev->res_wp, buf, count)) {
-                up (&dev->sem);
-                return -EFAULT;
-        }
-        dev->res_wp += count;
-        if (dev->res_wp == dev->res_end)
-                dev->res_wp = dev->res_buffer; /* wrapped */
-        up(&dev->res_sem);
-
-        /* finally, awake any reader */
-        wake_up_interruptible(&dev->res_rqueue);  /* blocked in read() and select() */
-
-        return count;
+        
+        // Grab a bio, complete it, and blog about it.
+        entry = list_entry(&dev->bio_list, struct bdtun_bio_list_entry, list);
+        bio_endio(entry->bio, 0);
+        printk(KERN_DEBUG "bdtun: successfully finished a bio.\n");
+        
+        up(&dev->bio_list_queue_sem);
+        
+        return 0;
 }
 
 /*
@@ -421,19 +328,8 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
         }
         
         /*
-         * Allocate the communication buffer
+         * Set client count for char device
          */
-        new->rq_buffersize = COMM_BUFFER_SIZE;
-        new->rq_buffer = vmalloc(COMM_BUFFER_SIZE);
-        
-        if (new->rq_buffer == NULL) {
-                goto vfree;
-        }
-        
-        new->rq_end = new->rq_buffer;
-        new->rq_wp  = new->rq_buffer;
-        new->rq_rp  = new->rq_buffer;
-        
         new->ch_client_count = 0;
         
         /*
@@ -444,17 +340,22 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
         new->bd_size       = new->bd_nsectors * logical_block_size;
         
         /*
-         * Locks, stuff like that 
+         * Semaphores stuff like that 
          */
-        sema_init(&new->rq_sem, 1);
-        sema_init(&new->res_sem, 1);
+        sema_init(&new->sem, 1);
+        sema_init(&new->bio_list_queue_sem, 1);
+        
+        /*
+         * Bio list
+         */
+        INIT_LIST_HEAD(&new->bio_list);
 
         /*
          * Request processing work queue
          */        
         new->wq = alloc_workqueue(qname, 0, 0);
         if (!new->wq) {
-                goto vfree_rqbuf;
+                goto vfree;
         }
         
         /*
@@ -530,8 +431,6 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
                 unregister_blkdev(bd_major, "bdtun");
         vfree_wq:
                 destroy_workqueue(new->wq);
-        vfree_rqbuf:
-                vfree(new->rq_buffer);
         vfree:
                 vfree(new);
                 return -ENOMEM;
@@ -568,7 +467,6 @@ static int bdtun_remove(char *name) {
         
         /* Unlink and free device structure */
         list_del(&dev->list);
-        vfree(dev->rq_buffer);
         vfree(dev);
         printk(KERN_NOTICE "bdtun: device removed from list\n");
         
