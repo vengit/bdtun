@@ -24,8 +24,6 @@
 
 MODULE_LICENSE("GPL");
 
-#define COMM_BUFFER_SIZE 102400
-
 /*
  * A work item for our work queue.
  * We need a work queue to get the bio-s out of
@@ -330,14 +328,12 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
         int error;
         int bd_major;
         int ch_major;
-        char charname[36];
-        char qname[34];
+        char charname[37];
+        char qname[35];
         
         /*
          * Set up character device and workqueue name
          */
-        memset(qname, 0, 34);
-        memset(charname, 0, 36);
         strncpy(charname, name, 32);
         strcat(charname, "_tun");
         strncpy(qname, name, 32);
