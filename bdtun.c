@@ -32,9 +32,11 @@ MODULE_LICENSE("GPL");
 struct bdtun {
         /* It's a linked list of devices */
         struct list_head list;
+        
         /* character device related */
         struct cdev ch_dev;
         int ch_major;
+        
         /* Buffers for communicating with the userland driver */
         int rq_buffersize;
         char *rq_buffer;
@@ -46,6 +48,7 @@ struct bdtun {
         char *res_end;
         char *res_rp;
         char *res_wp;
+        
         /* userland sync stuff */
         int ch_client_count;
         wait_queue_head_t rq_rqueue;
@@ -56,18 +59,20 @@ struct bdtun {
         struct semaphore rq_sem; /* request queue sem */
         struct semaphore res_sem; /* response queue sem */
         struct workqueue_struct *wq;
-        struct work_struct work;
+
         /* Block device related stuff*/
         unsigned long bd_size;
         int bd_block_size;
         int bd_nsectors;
         struct gendisk *bd_gd;
+        
         /* bd sync stuff */
         spinlock_t bd_lock;
 };
 
-struct workparams {
+struct bdtun_work {
         int write;
+        struct work_struct work;        
 };
 
 /*
@@ -103,7 +108,8 @@ void bdtun_do_work(struct work_struct *work) {
         //struct workparams *params = data;
         //printk(KERN_INFO "bdtun: doing work, write(%d)\n", params->write);
         //return NULL;
-        printk(KERN_INFO "bdtun: doing some work. But dunno what. Meh.\n");
+        struct bdtun_work *w = container_of(work, struct bdtun_work, work);
+        printk(KERN_INFO "bdtun: doing some work, write(%d). But dunno what. Meh.\n", w->write);
 }
 
 /*
@@ -114,19 +120,29 @@ static void bdtun_transfer(struct bdtun *dev, sector_t sector,
         
         unsigned long offset = sector * dev->bd_block_size;
         unsigned long nbytes = nsect * dev->bd_block_size;
+        
+        struct bdtun_work *w = vmalloc(sizeof(struct bdtun_work));
+        // TODO: what if no memory?
+        INIT_WORK(&w->work, bdtun_do_work);
+        w->write = write;
 
         if ((offset + nbytes) > dev->bd_size) {
                 printk (KERN_NOTICE "bdtun: Beyond-end write (%ld %ld)\n", offset, nbytes);
+                vfree(w);
                 return;
         }
-        //queue_work(dev->wq, work);
-        if (write) {
+        
+        queue_work(dev->wq, &w->work);
+        
+        //vfree(w);
+        
+        //if (write) {
                 // TODO: put transfer onto the queue
                 //memcpy(dev->bd_data + offset, buffer, nbytes);
-        } else {
+        //} else {
                 // TODO: put transfer onto the queue
                 //memcpy(buffer, dev->bd_data + offset, nbytes);
-        }
+        //}
 }
 
 static void bdtun_request(struct request_queue *q) {
@@ -139,7 +155,7 @@ static void bdtun_request(struct request_queue *q) {
                         __blk_end_request_all(req, -EIO);
                         continue;
                 }
-                // TODO: create a work queue
+                // TODO: add the work to the work queue
                 bdtun_transfer(req->rq_disk->private_data, blk_rq_pos(req), blk_rq_cur_sectors(req),
                                 req->buffer, rq_data_dir(req));
                 if ( ! __blk_end_request_cur(req, 0) ) {
@@ -422,8 +438,10 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         spin_lock_init(&new->bd_lock);
         sema_init(&new->rq_sem, 1);
         sema_init(&new->res_sem, 1);
-        
-        INIT_WORK(&new->work, bdtun_do_work);
+
+        /*
+         * Request processing work queue
+         */        
         new->wq = alloc_workqueue(qname, 0, 0);
         if (!new->wq) {
                 vfree(new);
