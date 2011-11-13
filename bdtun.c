@@ -263,9 +263,14 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         }
         
         // Grab a bio, complete it, and blog about it.
-        entry = list_entry(&dev->bio_list, struct bdtun_bio_list_entry, list);
-        bio_endio(entry->bio, 0);
-        printk(KERN_DEBUG "bdtun: successfully finished a bio.\n");
+        if (!list_empty(&dev->bio_list)) {
+                entry = list_entry(&dev->bio_list, struct bdtun_bio_list_entry, list);
+                bio_endio(entry->bio, 0);
+                list_del(&dev->bio_list);
+                printk(KERN_DEBUG "bdtun: successfully finished a bio.\n");
+        } else {
+                printk(KERN_DEBUG "bdtun: tried to write chdev, but bio list was MT.\n");
+        }
         
         up(&dev->bio_list_queue_sem);
         
@@ -396,7 +401,6 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
         strcpy(new->bd_gd->disk_name, name);
         set_capacity(new->bd_gd, new->bd_nsectors);
         new->bd_gd->queue = queue;
-        add_disk(new->bd_gd);
 
         /*
          * Initialize character device
@@ -422,6 +426,31 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
         list_add_tail(&new->list, &device_list);
         
         printk(KERN_NOTICE "bdtun: module init finished\n");
+        
+        /*
+         * Register the disk now.
+         * 
+         * This needs to be done at the end, so the char device will be
+         * up, and we will be able to serve io requests.
+         * 
+         * It would also be a great idea to postpone this step until
+         * the open() on the char device, so insmod won't hang and
+         * run onto a timeout eventually.
+         * 
+         * NOTE: add_disk() does not return until the kernel finished
+         * reading the partition table. add_disk() should be postponed
+         * until the first read() on the tunnel char dev.
+         * 
+         * Even then it should be fired off in a tasklet, so the call
+         * can go on and wait on the bio to-do list.
+         * 
+         * Hmm... a tasklet could be created right now.
+         * 
+         * Ok, I fed up with kernel panics and deadlocks, I'll go
+         * and play HAM radio. That's it.
+         */
+        add_disk(new->bd_gd);
+
         return 0;
         
         /*
