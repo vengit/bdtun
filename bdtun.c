@@ -104,7 +104,7 @@ LIST_HEAD(device_list);
 /*
  * Do the work: process an I/O request async. 
  */
-void bdtun_do_work(struct work_struct *work) {
+static void bdtun_do_work(struct work_struct *work) {
         //struct workparams *params = data;
         //printk(KERN_INFO "bdtun: doing work, write(%d)\n", params->write);
         //return NULL;
@@ -167,12 +167,12 @@ static int bdtun_xfer_bio(struct bdtun *dev, struct bio *bio) {
 /*
  * Request processing
  */
-int bdtun_make_request(struct request_queue *q, struct bio *bio) {
+static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
         struct bdtun *dev = q->queuedata;
         int status;
         
         status = bdtun_xfer_bio(dev, bio);
-        bio_endio(bio, status);
+        bio_endio(bio, 0);
         
         return 0;
 }
@@ -180,7 +180,7 @@ int bdtun_make_request(struct request_queue *q, struct bio *bio) {
 /*
  *  Get the "drive geometry"
  */
-int bdtun_getgeo (struct block_device *bdev, struct hd_geometry *geo) {
+static int bdtun_getgeo (struct block_device *bdev, struct hd_geometry *geo) {
         long size;
         struct bdtun *dev = bdev->bd_disk->private_data;
         
@@ -208,7 +208,7 @@ static struct block_device_operations bdtun_ops = {
  * Character device
  */
 
-int bdtunch_open(struct inode *inode, struct file *file) {
+static int bdtunch_open(struct inode *inode, struct file *file) {
         struct bdtun *dev = file->private_data;
         
         printk(KERN_DEBUG "bdtun: got device_open on char dev\n");
@@ -228,7 +228,7 @@ int bdtunch_open(struct inode *inode, struct file *file) {
         return 0;
 }
 
-int bdtunch_release(struct inode *inode, struct file *file) {
+static int bdtunch_release(struct inode *inode, struct file *file) {
         struct bdtun *dev = file->private_data;
         
         printk(KERN_DEBUG "bdtun: got device_release on char dev\n");
@@ -244,7 +244,7 @@ int bdtunch_release(struct inode *inode, struct file *file) {
         return 0;
 }
 
-ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t * f_pos) {
+static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t * f_pos) {
         struct bdtun *dev = filp->private_data;
         
         printk(KERN_DEBUG "bdtun: got device_read on char dev\n");
@@ -329,7 +329,7 @@ static int bdtunch_getwritespace(struct bdtun *dev, struct file *filp)
         return 0;
 }
 
-ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, loff_t *offset) {
+static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, loff_t *offset) {
         struct bdtun *dev = filp->private_data;
         int result;
  
@@ -377,7 +377,7 @@ static struct file_operations bdtunch_ops = {
  * Device list management auxilliary functions
  */
 
-struct bdtun *bdtun_find_device(char *name) {
+static struct bdtun *bdtun_find_device(char *name) {
         struct list_head *ptr;
         struct bdtun *entry;
         
@@ -393,7 +393,7 @@ struct bdtun *bdtun_find_device(char *name) {
 /*
  *  Commands to manage devices
  */
-int bdtun_create(char *name, int logical_block_size, size_t size) {
+static int bdtun_create(char *name, int logical_block_size, size_t size) {
         struct bdtun *new;
         struct request_queue *queue;
         int error;
@@ -462,6 +462,7 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         queue = blk_alloc_queue(GFP_KERNEL);
         if (!queue) {
         }
+        queue->queuedata = new;
         blk_queue_make_request(queue, bdtun_make_request);
 
         if (queue == NULL) {
@@ -537,7 +538,7 @@ int bdtun_create(char *name, int logical_block_size, size_t size) {
         
 }
 
-int bdtun_remove(char *name) {
+static int bdtun_remove(char *name) {
         struct bdtun *dev;
         
         dev = bdtun_find_device(name);
@@ -573,14 +574,14 @@ int bdtun_remove(char *name) {
         return 0;
 }
 
-int bdtun_info(char *name, struct bdtun_info *device_info) {
+/*static int bdtun_info(char *name, struct bdtun_info *device_info) {
         struct bdtun *dev = bdtun_find_device(name);
         strncpy(device_info->name, name, 32);
         device_info->capacity = dev->bd_size;
         return 0;
 }
 
-void bdtun_list(char **ptrs, int offset, int maxdevices) {
+static void bdtun_list(char **ptrs, int offset, int maxdevices) {
         struct list_head *ptr;
         struct bdtun *entry;
         int i;
@@ -599,7 +600,7 @@ void bdtun_list(char **ptrs, int offset, int maxdevices) {
                 ptrs[i] = entry->bd_gd->disk_name;
                 i++;
         }
-}
+}*/
 
 /*
  * Initialize module
