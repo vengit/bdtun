@@ -77,6 +77,17 @@ struct bdtun {
 };
 
 /*
+ * Disk add work queue.
+ */
+
+struct bdtun_add_disk_work {
+	struct gendisk *gd;
+	struct work_struct work;
+} add_disk_work;
+
+struct workqueue_struct *add_disk_q;
+
+/*
  * Control device
  */
 struct cdev ctrl_dev;
@@ -130,6 +141,12 @@ static void bdtun_do_work(struct work_struct *work) {
         
         // TODO: It Seeeeems ok to do this here. Find out is it really ok.
         kfree(w);
+}
+
+static void bdtun_do_add_disk(struct work_struct *work)	{
+        struct bdtun_add_disk_work *w = container_of(work, struct bdtun_add_disk_work, work);
+        
+        add_disk(w->gd);
 }
 
 /*
@@ -319,10 +336,12 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
         /*
          * Set up character device and workqueue name
          */
+        memset(qname, 0, 34);
+        memset(charname, 0, 36);
         strncpy(charname, name, 32);
         strcat(charname, "_tun");
         strncpy(qname, name, 32);
-        strcat(charname, "_q");
+        strcat(qname, "_q");
         
         /*
          * Allocate device structure
@@ -363,6 +382,11 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
                 goto vfree;
         }
         
+        add_disk_q = alloc_workqueue("bdtun_add_disk", 0, 0);
+        if (!add_disk_q) {
+                goto vfree_wq;
+        }
+        
         /*
          * Get a request queue.
          */
@@ -373,7 +397,7 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
         blk_queue_make_request(queue, bdtun_make_request);
 
         if (queue == NULL) {
-                goto vfree_wq;
+                goto vfree_adq;
         }
         
         blk_queue_logical_block_size(queue, logical_block_size);
@@ -384,7 +408,7 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
         bd_major = register_blkdev(0, "bdtun");
         if (bd_major <= 0) {
                 printk(KERN_WARNING "bdtun: unable to get major number\n");
-                goto vfree_wq_unreg;
+                goto vfree_adq_unreg;
         }
         
         /*
@@ -392,7 +416,7 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
          */
         new->bd_gd = alloc_disk(16);
         if (!new->bd_gd) {
-                goto vfree_wq_unreg;
+                goto vfree_adq_unreg;
         }
         new->bd_gd->major = bd_major;
         new->bd_gd->first_minor = 0;
@@ -408,7 +432,7 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
         printk(KERN_INFO "bdtun: setting up char device\n");
         if (alloc_chrdev_region(&ch_major, 0, 1, charname) != 0) {
                 printk(KERN_WARNING "bdtun: could not allocate character device number\n");
-                goto vfree_wq_unreg;
+                goto vfree_adq_unreg;
         }
         new->ch_major = ch_major;
         // register character device
@@ -417,7 +441,7 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
         error = cdev_add(&new->ch_dev, MKDEV(ch_major,0),1);
         if (error) {
                 printk(KERN_NOTICE "bdtun: error setting up char device\n");
-                goto vfree_wq_unreg;
+                goto vfree_adq_unreg;
         }
         
         /*
@@ -449,15 +473,19 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
          * Ok, I fed up with kernel panics and deadlocks, I'll go
          * and play HAM radio. That's it.
          */
-        add_disk(new->bd_gd);
+        INIT_WORK(&add_disk_work.work, bdtun_do_add_disk);
+        add_disk_work.gd = new->bd_gd;
+        queue_work(add_disk_q, &add_disk_work.work);
 
         return 0;
         
         /*
          * "catch exceptions"
          */
-        vfree_wq_unreg:
+        vfree_adq_unreg:
                 unregister_blkdev(bd_major, "bdtun");
+        vfree_adq:
+                destroy_workqueue(add_disk_q);
         vfree_wq:
                 destroy_workqueue(new->wq);
         vfree:
