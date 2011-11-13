@@ -65,13 +65,10 @@ struct bdtun {
         int bd_block_size;
         int bd_nsectors;
         struct gendisk *bd_gd;
-        
-        /* bd sync stuff */
-        spinlock_t bd_lock;
 };
 
 struct bdtun_work {
-        int write;
+        struct bio *bio;
         struct work_struct work;        
 };
 
@@ -105,20 +102,18 @@ LIST_HEAD(device_list);
  * Do the work: process an I/O request async. 
  */
 static void bdtun_do_work(struct work_struct *work) {
-        //struct workparams *params = data;
-        //printk(KERN_INFO "bdtun: doing work, write(%d)\n", params->write);
-        //return NULL;
         struct bdtun_work *w = container_of(work, struct bdtun_work, work);
-        printk(KERN_INFO "bdtun: doing some work, write(%d). But dunno what. Meh.\n", w->write);
-        // OMG should we do thes here???
-        // There was a freeze, but after commenting out, it remained.
+        printk(KERN_INFO "bdtun: doing some work, but dunno what. Meh.\n");
+        // TODO: need to grab a lock here maybe?
+        bio_endio(w->bio, 0);
+        // TODO: It Seeeeems ok to do this here. Find out is it really ok.
         kfree(w);
 }
 
 /*
  * Handle an I/O request.
  */
-static int bdtun_transfer(struct bdtun *dev, unsigned long offset, unsigned long nbytes, char *buffer, int write) {
+/*static int bdtun_transfer(struct bdtun *dev, unsigned long offset, unsigned long nbytes, char *buffer, int write) {
         struct bdtun_work *w = kmalloc(sizeof(struct bdtun_work), GFP_ATOMIC);
         
         if (!w) {
@@ -144,35 +139,42 @@ static int bdtun_transfer(struct bdtun *dev, unsigned long offset, unsigned long
                 //memcpy(buffer, dev->bd_data + offset, nbytes);
         //}
         return 0;
-}
+}*/
 
 /*
  * Transfer one bio structure 
  */
-static int bdtun_xfer_bio(struct bdtun *dev, struct bio *bio) {
-        int i;
-        struct bio_vec *bvec;
-        unsigned long offset = bio->bi_sector << 9;
+/*static int bdtun_xfer_bio(struct bdtun *dev, struct bio *bio) {
+        //int i;
+        //struct bio_vec *bvec;
+        //unsigned long offset = bio->bi_sector << 9;
         
-        bio_for_each_segment(bvec, bio, i) {
-                char *buffer = __bio_kmap_atomic(bio, i, KM_USER0);
-                bdtun_transfer(dev, offset, bio_cur_bytes(bio), buffer, bio_data_dir(bio) == WRITE);
-                offset += bio_cur_bytes(bio);
-                __bio_kunmap_atomic(bio, KM_USER0);
-        }
+        //bio_for_each_segment(bvec, bio, i) {
+                //char *buffer = __bio_kmap_atomic(bio, i, KM_USER0);
+                //bdtun_transfer(dev, offset, bio_cur_bytes(bio), buffer, bio_data_dir(bio) == WRITE);
+                //offset += bio_cur_bytes(bio);
+                //__bio_kunmap_atomic(bio, KM_USER0);
+        //}
         
         return 0;
-}
+}*/
 
 /*
  * Request processing
  */
 static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
         struct bdtun *dev = q->queuedata;
-        int status;
+        struct bdtun_work *w = kmalloc(sizeof(struct bdtun_work), GFP_ATOMIC);
         
-        status = bdtun_xfer_bio(dev, bio);
-        bio_endio(bio, 0);
+        if (!w) {
+                // TODO: will this be a retry or what?
+                // bio_endio(bio, -EIO); <- do we need this?
+                return -EIO;
+        }
+        
+        INIT_WORK(&w->work, bdtun_do_work);
+        w->bio = bio;
+        queue_work(dev->wq, &w->work);
         
         return 0;
 }
@@ -444,7 +446,6 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
         /*
          * Locks, stuff like that 
          */
-        spin_lock_init(&new->bd_lock);
         sema_init(&new->rq_sem, 1);
         sema_init(&new->res_sem, 1);
 
