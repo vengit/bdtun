@@ -202,7 +202,8 @@ static struct block_device_operations bdtun_ops = {
  */
 
 static int bdtunch_open(struct inode *inode, struct file *file) {
-        struct bdtun *dev = file->private_data;
+        struct bdtun *dev = container_of(inode->i_cdev, struct bdtun, ch_dev);
+        file->private_data = dev;
         
         printk(KERN_DEBUG "bdtun: got device_open on char dev\n");
         
@@ -266,7 +267,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         
         up(&dev->bio_list_queue_sem);
         
-        return 0;
+        return res;
 }
 
 static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, loff_t *offset) {
@@ -289,7 +290,8 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         
         up(&dev->bio_list_queue_sem);
         
-        return 0;
+        // Pretend a successful write to avoid locked process
+        return count;
 }
 
 /*
@@ -470,9 +472,9 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
          * Ok, I fed up with kernel panics and deadlocks, I'll go
          * and play HAM radio. That's it.
          */
-        //INIT_WORK(&add_disk_work.work, bdtun_do_add_disk);
-        //add_disk_work.gd = new->bd_gd;
-        //queue_work(add_disk_q, &add_disk_work.work);
+        INIT_WORK(&add_disk_work.work, bdtun_do_add_disk);
+        add_disk_work.gd = new->bd_gd;
+        queue_work(add_disk_q, &add_disk_work.work);
 
         return 0;
         
