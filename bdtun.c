@@ -327,7 +327,7 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
         struct request_queue *queue;
         int error;
         int bd_major;
-        int ch_major;
+        int ch_num;
         char charname[37];
         char qname[35];
         
@@ -426,15 +426,16 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
          * Initialize character device
          */
         printk(KERN_INFO "bdtun: setting up char device\n");
-        if (alloc_chrdev_region(&ch_major, 0, 1, charname) != 0) {
+        if (alloc_chrdev_region(&ch_num, 0, 1, charname) != 0) {
                 printk(KERN_WARNING "bdtun: could not allocate character device number\n");
                 goto vfree_adq_unreg;
         }
-        new->ch_major = ch_major;
+        new->ch_major = MAJOR(ch_num);
         // register character device
         cdev_init(&new->ch_dev, &bdtunch_ops);
         new->ch_dev.owner = THIS_MODULE;
-        error = cdev_add(&new->ch_dev, MKDEV(ch_major,0),1);
+        printk(KERN_INFO "bdtun: char major %d\n", new->ch_major);
+        error = cdev_add(&new->ch_dev, ch_num ,1);
         if (error) {
                 printk(KERN_NOTICE "bdtun: error setting up char device\n");
                 goto vfree_adq_unreg;
@@ -469,9 +470,9 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
          * Ok, I fed up with kernel panics and deadlocks, I'll go
          * and play HAM radio. That's it.
          */
-        INIT_WORK(&add_disk_work.work, bdtun_do_add_disk);
-        add_disk_work.gd = new->bd_gd;
-        queue_work(add_disk_q, &add_disk_work.work);
+        //INIT_WORK(&add_disk_work.work, bdtun_do_add_disk);
+        //add_disk_work.gd = new->bd_gd;
+        //queue_work(add_disk_q, &add_disk_work.work);
 
         return 0;
         
@@ -511,6 +512,8 @@ static int bdtun_remove(char *name) {
         /* Get rid of the work queue */
         flush_workqueue(dev->wq);
         destroy_workqueue(dev->wq);
+        flush_workqueue(add_disk_q);
+        destroy_workqueue(add_disk_q);
         
         /* Destroy character devices */
         printk(KERN_DEBUG "bdtun: removing char device\n");
@@ -558,8 +561,8 @@ static void bdtun_list(char **ptrs, int offset, int maxdevices) {
  * Initialize module
  */
 static int __init bdtun_init(void) {
-        bdtun_create("bdtuna", 512, 1000000);
-        bdtun_create("bdtunb", 512, 10000000);
+        bdtun_create("bdtuna", 512, 10000000);
+        bdtun_create("bdtunb", 512, 100000000);
         return 0;
 }
 
