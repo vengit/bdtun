@@ -201,9 +201,9 @@ static struct block_device_operations bdtun_ops = {
  * Character device
  */
 
-static int bdtunch_open(struct inode *inode, struct file *file) {
+static int bdtunch_open(struct inode *inode, struct file *filp) {
         struct bdtun *dev = container_of(inode->i_cdev, struct bdtun, ch_dev);
-        file->private_data = dev;
+        filp->private_data = dev;
         
         printk(KERN_DEBUG "bdtun: got device_open on char dev\n");
         
@@ -222,8 +222,8 @@ static int bdtunch_open(struct inode *inode, struct file *file) {
         return 0;
 }
 
-static int bdtunch_release(struct inode *inode, struct file *file) {
-        struct bdtun *dev = file->private_data;
+static int bdtunch_release(struct inode *inode, struct file *filp) {
+        struct bdtun *dev = filp->private_data;
         
         printk(KERN_DEBUG "bdtun: got device_release on char dev\n");
         
@@ -274,15 +274,17 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         struct bdtun *dev = filp->private_data;
         struct bdtun_bio_list_entry *entry;
         
+        printk(KERN_INFO "bdtun: dev pointer: %p\n", dev);
+        
         if (down_interruptible(&dev->bio_list_queue_sem)) {
                 return -ERESTARTSYS;
         }
         
         // Grab a bio, complete it, and blog about it.
         if (!list_empty(&dev->bio_list)) {
-                entry = list_entry(&dev->bio_list, struct bdtun_bio_list_entry, list);
+                entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
                 bio_endio(entry->bio, 0);
-                list_del(&dev->bio_list);
+                list_del(dev->bio_list.next);
                 printk(KERN_DEBUG "bdtun: successfully finished a bio.\n");
         } else {
                 printk(KERN_DEBUG "bdtun: tried to write chdev, but bio list was MT.\n");
