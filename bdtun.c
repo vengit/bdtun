@@ -518,8 +518,6 @@ static int bdtun_remove(char *name) {
         /* Get rid of the work queue */
         flush_workqueue(dev->wq);
         destroy_workqueue(dev->wq);
-        flush_workqueue(add_disk_q);
-        destroy_workqueue(add_disk_q);
         
         /* Destroy character devices */
         printk(KERN_DEBUG "bdtun: removing char device\n");
@@ -535,7 +533,7 @@ static int bdtun_remove(char *name) {
         return 0;
 }
 
-/*static int bdtun_info(char *name, struct bdtun_info *device_info) {
+static int bdtun_info(char *name, struct bdtun_info *device_info) {
         struct bdtun *dev = bdtun_find_device(name);
         strncpy(device_info->name, name, 32);
         device_info->capacity = dev->bd_size;
@@ -561,7 +559,7 @@ static void bdtun_list(char **ptrs, int offset, int maxdevices) {
                 ptrs[i] = entry->bd_gd->disk_name;
                 i++;
         }
-}*/
+}
 
 /*
  * Initialize module
@@ -576,6 +574,12 @@ static int __init bdtun_init(void) {
  * Clean up on module remove
  */
 static void __exit bdtun_exit(void) {
+        /*
+         * Destroy work queue
+         */
+        flush_workqueue(add_disk_q);
+        destroy_workqueue(add_disk_q);
+        
         bdtun_remove("bdtuna");
         bdtun_remove("bdtunb");
 }
