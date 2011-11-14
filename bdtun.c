@@ -126,6 +126,8 @@ static void bdtun_do_work(struct work_struct *work) {
                 return;
         }
         
+        new->bio = w->bio;
+        
         // TODO: we will need to look bio-s up very frequently, so we
         // better use some pointer-like stuff to identify bio-s even
         // (or especially) towards the charater device.
