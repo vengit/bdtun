@@ -119,6 +119,7 @@ static void bdtun_do_add_disk(struct work_struct *work)        {
  */
 static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
         struct bdtun *dev = q->queuedata;
+        unsigned long flags;
         
         // Constant TODO: We need to free this. Check twice. Seriously.
         struct bdtun_bio_list_entry *new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_ATOMIC);
@@ -129,9 +130,9 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
         
         new->bio = bio;
         
-        spin_lock_bh(&dev->bio_out_list_lock);
+        spin_lock_irqsave(&dev->bio_out_list_lock, flags);
         list_add_tail(&new->list, &dev->bio_out_list);
-        spin_unlock_bh(&dev->bio_out_list_lock);
+        spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
         
         wake_up(&dev->bio_list_out_queue);
         
@@ -189,6 +190,7 @@ static int bdtunch_release(struct inode *inode, struct file *filp) {
 static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *f_pos) {
         struct bdtun *dev = filp->private_data;
         struct bdtun_bio_list_entry *entry;
+        unsigned long flags;
         int res;
         
         printk(KERN_DEBUG "bdtun: got device_read on char dev\n");
@@ -204,10 +206,10 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
          */
         out_list_is_empty:
         
-        spin_lock_bh(&dev->bio_out_list_lock);
+        spin_lock_irqsave(&dev->bio_out_list_lock, flags);
         if (list_empty(&dev->bio_out_list)) {
                 /* Release locks, wait until someone wakes us up */
-                spin_unlock_bh(&dev->bio_out_list_lock);
+                spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
                 // TODO: Maybe a better solution?
                 // TODO: is this a race condition?
                 if(wait_event_interruptible(dev->bio_list_out_queue, list_empty(&dev->bio_out_list)) < 0) {
@@ -220,7 +222,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         /* Ok, the "in" list is not empty, and we're holding the lock.
          * Acquire the "in" spinlock too. This is why we order this
          * way */
-        spin_lock_bh(&dev->bio_in_list_lock);
+        spin_lock_irqsave(&dev->bio_in_list_lock, flags);
         
         /*
          * Take the first (the oldest) bio, and insert it to the end
@@ -230,8 +232,8 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         list_del_init(&entry->list);
         list_add_tail(&dev->bio_in_list, &entry->list);
         
-        spin_unlock_bh(&dev->bio_in_list_lock);
-        spin_unlock_bh(&dev->bio_out_list_lock);
+        spin_unlock_irqrestore(&dev->bio_in_list_lock, flags);
+        spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
         
         /*
          * Wake up the waiting writer processes
@@ -244,12 +246,13 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
 static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, loff_t *offset) {
         struct bdtun *dev = filp->private_data;
         struct bdtun_bio_list_entry *entry;
+        unsigned long flags;
         
         in_list_is_empty:
         
-        spin_lock_bh(&dev->bio_in_list_lock);
+        spin_lock_irqsave(&dev->bio_in_list_lock, flags);
         if (list_empty(&dev->bio_in_list)) {
-                spin_unlock_bh(&dev->bio_in_list_lock);
+                spin_unlock_irqrestore(&dev->bio_in_list_lock, flags);
                 if (wait_event_interruptible(dev->bio_list_in_queue, list_empty(&dev->bio_in_list)) < 0) {
                         return -ERESTARTSYS;
                 }
@@ -258,7 +261,7 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         entry = list_entry(dev->bio_in_list.next, struct bdtun_bio_list_entry, list);
         bio_endio(entry->bio, 0);
         list_del(dev->bio_in_list.next);
-        spin_unlock_bh(&dev->bio_in_list_lock);
+        spin_unlock_irqrestore(&dev->bio_in_list_lock, flags);
         
         printk(KERN_DEBUG "bdtun: successfully finished a bio.\n");
         
