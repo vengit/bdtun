@@ -78,8 +78,8 @@ struct bdtun {
  */
 
 struct bdtun_add_disk_work {
-	struct gendisk *gd;
-	struct work_struct work;
+        struct gendisk *gd;
+        struct work_struct work;
 } add_disk_work;
 
 struct workqueue_struct *add_disk_q;
@@ -108,7 +108,7 @@ LIST_HEAD(device_list);
  */
 #define KERNEL_SECTOR_SIZE 512
 
-static void bdtun_do_add_disk(struct work_struct *work)	{
+static void bdtun_do_add_disk(struct work_struct *work)        {
         struct bdtun_add_disk_work *w = container_of(work, struct bdtun_add_disk_work, work);
         
         add_disk(w->gd);
@@ -118,22 +118,12 @@ static void bdtun_do_add_disk(struct work_struct *work)	{
  * Request processing
  */
 static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
-        /* TODO: it seems that it's possible to wait in make_request
-         * (http://lwn.net/Articles/343514/) I have to check if this
-         * is possible, and exatly when.
-         * 
-         * Try something from
-         * http://www.linuxjournal.com/article/5833 */
-        
         struct bdtun *dev = q->queuedata;
         
         // Constant TODO: We need to free this. Check twice. Seriously.
         struct bdtun_bio_list_entry *new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_ATOMIC);
         
         if (!new) {
-                // TODO: will this be a retry or what?
-                // bio_endio(bio, -EIO); <- do we need this?
-                // no we don't, and yes, this is a retry.
                 return -EIO;
         }
         
@@ -142,6 +132,8 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
         spin_lock(&dev->bio_out_list_lock);
         list_add_tail(&new->list, &dev->bio_out_list);
         spin_unlock(&dev->bio_out_list_lock);
+        
+        wake_up(&dev->bio_list_out_queue);
         
         return 0;
 }
@@ -214,28 +206,35 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         
         spin_lock(&dev->bio_out_list_lock);
         if (list_empty(&dev->bio_out_list)) {
-			spin_unlock(&dev->bio_out_list_lock);
-			/* Release locks, wait until someone wakes us up */
-			// TODO: the actual waiting. Busy wait is OK for testing
-			schedule();
-			goto out_list_is_empty;
-		}
-		
-		/* Ok, the "in" list is not empty, and we're holding the lock.
-		 * Acquire the "in" spinlock too. This is why we order this
-		 * way */
-		spin_lock(&dev->bio_in_list_lock);
+                /* Release locks, wait until someone wakes us up */
+                spin_unlock(&dev->bio_out_list_lock);
+                if(wait_event_interruptible(dev->bio_list_out_queue, 1) < 0) {
+                        return -ERESTARTSYS;
+                }
+                
+                goto out_list_is_empty;
+        }
+                
+        /* Ok, the "in" list is not empty, and we're holding the lock.
+         * Acquire the "in" spinlock too. This is why we order this
+         * way */
+        spin_lock(&dev->bio_in_list_lock);
         
         /*
          * Take the first (the oldest) bio, and insert it to the end
          * of the "out" waiting list
          */
-        entry = list_entry(dev->bio_in_list.next, struct bdtun_bio_list_entry, list);
+        entry = list_entry(dev->bio_out_list.next, struct bdtun_bio_list_entry, list);
         list_del_init(&entry->list);
-        list_add_tail(&dev->bio_out_list, &entry->list);
+        list_add_tail(&dev->bio_in_list, &entry->list);
         
         spin_unlock(&dev->bio_in_list_lock);
         spin_unlock(&dev->bio_out_list_lock);
+        
+        /*
+         * Wake up the waiting writer processes
+         */
+        wake_up(&dev->bio_list_in_queue);
         
         return res;
 }
@@ -244,21 +243,22 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         struct bdtun *dev = filp->private_data;
         struct bdtun_bio_list_entry *entry;
         
-        printk(KERN_INFO "bdtun: dev pointer: %p\n", dev);
+        in_list_is_empty:
         
         spin_lock(&dev->bio_in_list_lock);
-        
-        // Grab a bio, complete it, and blog about it.
-        if (!list_empty(&dev->bio_in_list)) {
-                entry = list_entry(dev->bio_in_list.next, struct bdtun_bio_list_entry, list);
-                bio_endio(entry->bio, 0);
-                list_del(dev->bio_in_list.next);
+        if (list_empty(&dev->bio_in_list)) {
                 spin_unlock(&dev->bio_in_list_lock);
-                printk(KERN_DEBUG "bdtun: successfully finished a bio.\n");
-        } else {
-                spin_unlock(&dev->bio_in_list_lock);
-                printk(KERN_DEBUG "bdtun: tried to write chdev, but bio list was MT.\n");
+                if (wait_event_interruptible(dev->bio_list_in_queue, 1) < 0) {
+                        return -ERESTARTSYS;
+                }
+                goto in_list_is_empty;
         }
+        entry = list_entry(dev->bio_in_list.next, struct bdtun_bio_list_entry, list);
+        bio_endio(entry->bio, 0);
+        list_del(dev->bio_in_list.next);
+        spin_unlock(&dev->bio_in_list_lock);
+        
+        printk(KERN_DEBUG "bdtun: successfully finished a bio.\n");
         
         // Pretend a successful write to avoid locked process
         return count;
@@ -514,7 +514,6 @@ static void bdtun_list(char **ptrs, int offset, int maxdevices) {
  */
 static int __init bdtun_init(void) {
         bdtun_create("bdtuna", 512, 10000000);
-        bdtun_create("bdtunb", 512, 100000000);
         return 0;
 }
 
@@ -529,7 +528,6 @@ static void __exit bdtun_exit(void) {
         destroy_workqueue(add_disk_q);
         
         bdtun_remove("bdtuna");
-        bdtun_remove("bdtunb");
 }
 
 module_init(bdtun_init);
