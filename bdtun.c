@@ -129,9 +129,9 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
         
         new->bio = bio;
         
-        spin_lock(&dev->bio_out_list_lock);
+        spin_lock_bh(&dev->bio_out_list_lock);
         list_add_tail(&new->list, &dev->bio_out_list);
-        spin_unlock(&dev->bio_out_list_lock);
+        spin_unlock_bh(&dev->bio_out_list_lock);
         
         wake_up(&dev->bio_list_out_queue);
         
@@ -204,10 +204,10 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
          */
         out_list_is_empty:
         
-        spin_lock(&dev->bio_out_list_lock);
+        spin_lock_bh(&dev->bio_out_list_lock);
         if (list_empty(&dev->bio_out_list)) {
                 /* Release locks, wait until someone wakes us up */
-                spin_unlock(&dev->bio_out_list_lock);
+                spin_unlock_bh(&dev->bio_out_list_lock);
                 // TODO: Maybe a better solution?
                 // TODO: is this a race condition?
                 if(wait_event_interruptible(dev->bio_list_out_queue, list_empty(&dev->bio_out_list)) < 0) {
@@ -220,7 +220,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         /* Ok, the "in" list is not empty, and we're holding the lock.
          * Acquire the "in" spinlock too. This is why we order this
          * way */
-        spin_lock(&dev->bio_in_list_lock);
+        spin_lock_bh(&dev->bio_in_list_lock);
         
         /*
          * Take the first (the oldest) bio, and insert it to the end
@@ -230,8 +230,8 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         list_del_init(&entry->list);
         list_add_tail(&dev->bio_in_list, &entry->list);
         
-        spin_unlock(&dev->bio_in_list_lock);
-        spin_unlock(&dev->bio_out_list_lock);
+        spin_unlock_bh(&dev->bio_in_list_lock);
+        spin_unlock_bh(&dev->bio_out_list_lock);
         
         /*
          * Wake up the waiting writer processes
@@ -247,9 +247,9 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         
         in_list_is_empty:
         
-        spin_lock(&dev->bio_in_list_lock);
+        spin_lock_bh(&dev->bio_in_list_lock);
         if (list_empty(&dev->bio_in_list)) {
-                spin_unlock(&dev->bio_in_list_lock);
+                spin_unlock_bh(&dev->bio_in_list_lock);
                 if (wait_event_interruptible(dev->bio_list_in_queue, list_empty(&dev->bio_in_list)) < 0) {
                         return -ERESTARTSYS;
                 }
@@ -258,7 +258,7 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         entry = list_entry(dev->bio_in_list.next, struct bdtun_bio_list_entry, list);
         bio_endio(entry->bio, 0);
         list_del(dev->bio_in_list.next);
-        spin_unlock(&dev->bio_in_list_lock);
+        spin_unlock_bh(&dev->bio_in_list_lock);
         
         printk(KERN_DEBUG "bdtun: successfully finished a bio.\n");
         
