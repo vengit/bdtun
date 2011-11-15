@@ -335,6 +335,12 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
         spin_lock_init(&new->bio_out_list_lock);
         
         /*
+         * Wait queues
+         */
+        init_waitqueue_head(&new->bio_list_in_queue);
+        init_waitqueue_head(&new->bio_list_out_queue);
+        
+        /*
          * Bio list
          */
         INIT_LIST_HEAD(&new->bio_in_list);
