@@ -237,25 +237,31 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         printk(KERN_DEBUG "bdtun: sent something to the char device.\n");
 
         /*
-         * Lock ordering: alphabetic: in, out
+         * Lock ordering: first out, then in.
          */
-        spin_lock(&dev->bio_in_list_lock);
+        out_list_is_empty:
+        
         spin_lock(&dev->bio_out_list_lock);
+        if (list_empty(&dev->bio_out_list)) {
+			spin_unlock(&dev->bio_out_list_lock);
+			/* Release locks, wait until someone wakes us up */
+			// TODO: the actual waiting. Busy wait is OK for testing
+			schedule();
+			goto out_list_is_empty;
+		}
+		
+		/* Ok, the "in" list is not empty, and we're holding the lock.
+		 * Acquire the "in" spinlock too. This is why we order this
+		 * way */
+		spin_lock(&dev->bio_in_list_lock);
         
-        // TODO: we will need to queue the sent bio-s in a
-        // different list.
-        
-        // TODO: 
-        // If the list is MT, currently we fake success.
-        // Later on we will have to wait for the queue to be
-        // filled. This can not be done while holding a spin lock.
-        // The solution is to wait on an atomic variable, and
-        // re-check queue emptyness while holding a lock,
-        // if queue is empty, releasing the lock, and waiting
-        // on the atomic var again.
-                
-        // TODO: we need to signal that somethin is in the queue.
-        // perhaps an other semafor? reader-writer stuff how-to needed.
+        /*
+         * Take the first (the oldest) bio, and insert it to the end
+         * of the "out" waiting list
+         */
+        entry = list_entry(dev->bio_in_list.next, struct bdtun_bio_list_entry, list);
+        list_del_init(&entry->list);
+        list_add_tail(&dev->bio_out_list, &entry->list);
         
         spin_unlock(&dev->bio_in_list_lock);
         spin_unlock(&dev->bio_out_list_lock);
@@ -269,18 +275,17 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         
         printk(KERN_INFO "bdtun: dev pointer: %p\n", dev);
         
-        // Later this have to be the in_list
-        spin_lock(&dev->bio_out_list_lock);
+        spin_lock(&dev->bio_in_list_lock);
         
         // Grab a bio, complete it, and blog about it.
-        if (!list_empty(&dev->bio_out_list)) {
-                entry = list_entry(dev->bio_out_list.next, struct bdtun_bio_list_entry, list);
+        if (!list_empty(&dev->bio_in_list)) {
+                entry = list_entry(dev->bio_in_list.next, struct bdtun_bio_list_entry, list);
                 bio_endio(entry->bio, 0);
-                list_del(dev->bio_out_list.next);
-                spin_unlock(&dev->bio_out_list_lock);
+                list_del(dev->bio_in_list.next);
+                spin_unlock(&dev->bio_in_list_lock);
                 printk(KERN_DEBUG "bdtun: successfully finished a bio.\n");
         } else {
-                spin_unlock(&dev->bio_out_list_lock);
+                spin_unlock(&dev->bio_in_list_lock);
                 printk(KERN_DEBUG "bdtun: tried to write chdev, but bio list was MT.\n");
         }
         
