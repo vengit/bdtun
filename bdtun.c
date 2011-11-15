@@ -18,6 +18,7 @@
 #include <linux/list.h>
 #include <linux/semaphore.h>
 #include <linux/workqueue.h>
+#include <linux/spinlock.h>
 
 #include "bdtun.h"
 #include "commands.h"
@@ -58,14 +59,16 @@ struct bdtun {
         struct cdev ch_dev;
         int ch_major;
         
-        struct list_head bio_list;
-        wait_queue_head_t bio_list_queue;
-        struct semaphore bio_list_queue_sem;
+        struct list_head bio_out_list;
+        struct list_head bio_in_list;
+        wait_queue_head_t bio_list_out_queue;
+        wait_queue_head_t bio_list_in_queue;
+        spinlock_t bio_out_list_lock;
+        spinlock_t bio_in_list_lock;
         
         /* userland sync stuff */
         int ch_client_count;
         struct semaphore sem; /* semaphore for rarely modified fields */
-        struct workqueue_struct *wq;
 
         /* Block device related stuff*/
         unsigned long bd_size;
@@ -109,40 +112,6 @@ LIST_HEAD(device_list);
  */
 #define KERNEL_SECTOR_SIZE 512
 
-/*
- * Do the work: process an I/O request async. 
- * Put this bio into a linked list, so the char device can pick them up.
- */
-static void bdtun_do_work(struct work_struct *work) {
-        struct bdtun_work *w = container_of(work, struct bdtun_work, work);
-        
-        // Constant TODO: We need to free this. Check twice. Seriously.
-        struct bdtun_bio_list_entry *new = vmalloc(sizeof(struct bdtun_bio_list_entry));
-        
-        if (!new) {
-                // TODO: is this right? Test with || 1
-                bio_endio(w->bio, -EIO);
-                kfree(w);
-                return;
-        }
-        
-        new->bio = w->bio;
-        
-        // TODO: we will need to look bio-s up very frequently, so we
-        // better use some pointer-like stuff to identify bio-s even
-        // (or especially) towards the charater device.
-        
-        while(down_interruptible(&w->dev->bio_list_queue_sem) != 0);
-        list_add_tail(&new->list, &w->dev->bio_list);
-        up(&w->dev->bio_list_queue_sem);
-        
-        // TODO: need to grab a lock here maybe?
-        // bio_endio(w->bio, 0);
-        
-        // TODO: It Seeeeems ok to do this here. Find out is it really ok.
-        kfree(w);
-}
-
 static void bdtun_do_add_disk(struct work_struct *work)	{
         struct bdtun_add_disk_work *w = container_of(work, struct bdtun_add_disk_work, work);
         
@@ -153,21 +122,30 @@ static void bdtun_do_add_disk(struct work_struct *work)	{
  * Request processing
  */
 static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
-        struct bdtun *dev = q->queuedata;
-        struct bdtun_work *w = kmalloc(sizeof(struct bdtun_work), GFP_ATOMIC);
+        /* TODO: it seems that it's possible to wait in make_request
+         * (http://lwn.net/Articles/343514/) I have to check if this
+         * is possible, and exatly when.
+         * 
+         * Try something from
+         * http://www.linuxjournal.com/article/5833 */
         
-        if (!w) {
+        struct bdtun *dev = q->queuedata;
+        
+        // Constant TODO: We need to free this. Check twice. Seriously.
+        struct bdtun_bio_list_entry *new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_ATOMIC);
+        
+        if (!new) {
                 // TODO: will this be a retry or what?
                 // bio_endio(bio, -EIO); <- do we need this?
+                // no we don't, and yes, this is a retry.
                 return -EIO;
         }
         
-        INIT_WORK(&w->work, bdtun_do_work);
+        new->bio = bio;
         
-        w->bio = bio;
-        w->dev = dev;
-        
-        queue_work(dev->wq, &w->work);
+        spin_lock(&dev->bio_out_list_lock);
+        list_add_tail(&new->list, &dev->bio_out_list);
+        spin_unlock(&dev->bio_out_list_lock);
         
         return 0;
 }
@@ -247,27 +225,40 @@ static int bdtunch_release(struct inode *inode, struct file *filp) {
  */
 static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *f_pos) {
         struct bdtun *dev = filp->private_data;
+        struct bdtun_bio_list_entry *entry;
         int res;
         
         printk(KERN_DEBUG "bdtun: got device_read on char dev\n");
-        
-        if (down_interruptible(&dev->bio_list_queue_sem)) {
-                return -ERESTARTSYS;
-        }
         
         // Testing: write something silly
         res = min((int)count, 3);
         memcpy(buf, "E!\n", res);
         
         printk(KERN_DEBUG "bdtun: sent something to the char device.\n");
+
+        /*
+         * Lock ordering: alphabetic: in, out
+         */
+        spin_lock(&dev->bio_in_list_lock);
+        spin_lock(&dev->bio_out_list_lock);
         
         // TODO: we will need to queue the sent bio-s in a
         // different list.
         
+        // TODO: 
+        // If the list is MT, currently we fake success.
+        // Later on we will have to wait for the queue to be
+        // filled. This can not be done while holding a spin lock.
+        // The solution is to wait on an atomic variable, and
+        // re-check queue emptyness while holding a lock,
+        // if queue is empty, releasing the lock, and waiting
+        // on the atomic var again.
+                
         // TODO: we need to signal that somethin is in the queue.
         // perhaps an other semafor? reader-writer stuff how-to needed.
         
-        up(&dev->bio_list_queue_sem);
+        spin_unlock(&dev->bio_in_list_lock);
+        spin_unlock(&dev->bio_out_list_lock);
         
         return res;
 }
@@ -278,21 +269,20 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         
         printk(KERN_INFO "bdtun: dev pointer: %p\n", dev);
         
-        if (down_interruptible(&dev->bio_list_queue_sem)) {
-                return -ERESTARTSYS;
-        }
+        // Later this have to be the in_list
+        spin_lock(&dev->bio_out_list_lock);
         
         // Grab a bio, complete it, and blog about it.
-        if (!list_empty(&dev->bio_list)) {
-                entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
+        if (!list_empty(&dev->bio_out_list)) {
+                entry = list_entry(dev->bio_out_list.next, struct bdtun_bio_list_entry, list);
                 bio_endio(entry->bio, 0);
-                list_del(dev->bio_list.next);
+                list_del(dev->bio_out_list.next);
+                spin_unlock(&dev->bio_out_list_lock);
                 printk(KERN_DEBUG "bdtun: successfully finished a bio.\n");
         } else {
+                spin_unlock(&dev->bio_out_list_lock);
                 printk(KERN_DEBUG "bdtun: tried to write chdev, but bio list was MT.\n");
         }
-        
-        up(&dev->bio_list_queue_sem);
         
         // Pretend a successful write to avoid locked process
         return count;
@@ -369,24 +359,18 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
          * Semaphores stuff like that 
          */
         sema_init(&new->sem, 1);
-        sema_init(&new->bio_list_queue_sem, 1);
+        spin_lock_init(&new->bio_in_list_lock);
+        spin_lock_init(&new->bio_out_list_lock);
         
         /*
          * Bio list
          */
-        INIT_LIST_HEAD(&new->bio_list);
-
-        /*
-         * Request processing work queue
-         */        
-        new->wq = alloc_workqueue(qname, 0, 0);
-        if (!new->wq) {
-                goto vfree;
-        }
+        INIT_LIST_HEAD(&new->bio_in_list);
+        INIT_LIST_HEAD(&new->bio_out_list);
         
         add_disk_q = alloc_workqueue("bdtun_add_disk", 0, 0);
         if (!add_disk_q) {
-                goto vfree_wq;
+                goto vfree;
         }
         
         /*
@@ -489,8 +473,6 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
                 unregister_blkdev(bd_major, "bdtun");
         vfree_adq:
                 destroy_workqueue(add_disk_q);
-        vfree_wq:
-                destroy_workqueue(new->wq);
         vfree:
                 vfree(new);
                 return -ENOMEM;
@@ -514,10 +496,6 @@ static int bdtun_remove(char *name) {
         blk_cleanup_queue(dev->bd_gd->queue);
         del_gendisk(dev->bd_gd);
         put_disk(dev->bd_gd);
-        
-        /* Get rid of the work queue */
-        flush_workqueue(dev->wq);
-        destroy_workqueue(dev->wq);
         
         /* Destroy character devices */
         printk(KERN_DEBUG "bdtun: removing char device\n");
