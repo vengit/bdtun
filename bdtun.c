@@ -208,7 +208,9 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         if (list_empty(&dev->bio_out_list)) {
                 /* Release locks, wait until someone wakes us up */
                 spin_unlock(&dev->bio_out_list_lock);
-                if(wait_event_interruptible(dev->bio_list_out_queue, 1) < 0) {
+                // TODO: Maybe a better solution?
+                // TODO: is this a race condition?
+                if(wait_event_interruptible(dev->bio_list_out_queue, list_empty(&dev->bio_out_list)) < 0) {
                         return -ERESTARTSYS;
                 }
                 
@@ -248,7 +250,7 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         spin_lock(&dev->bio_in_list_lock);
         if (list_empty(&dev->bio_in_list)) {
                 spin_unlock(&dev->bio_in_list_lock);
-                if (wait_event_interruptible(dev->bio_list_in_queue, 1) < 0) {
+                if (wait_event_interruptible(dev->bio_list_in_queue, list_empty(&dev->bio_in_list)) < 0) {
                         return -ERESTARTSYS;
                 }
                 goto in_list_is_empty;
