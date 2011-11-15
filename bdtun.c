@@ -66,10 +66,6 @@ struct bdtun {
         spinlock_t bio_out_list_lock;
         spinlock_t bio_in_list_lock;
         
-        /* userland sync stuff */
-        int ch_client_count;
-        struct semaphore sem; /* semaphore for rarely modified fields */
-
         /* Block device related stuff*/
         unsigned long bd_size;
         int bd_block_size;
@@ -184,37 +180,12 @@ static struct block_device_operations bdtun_ops = {
 static int bdtunch_open(struct inode *inode, struct file *filp) {
         struct bdtun *dev = container_of(inode->i_cdev, struct bdtun, ch_dev);
         filp->private_data = dev;
-        
         printk(KERN_DEBUG "bdtun: got device_open on char dev\n");
-        
-        if (down_interruptible(&dev->sem)) {
-                return -ERESTARTSYS;
-        }
-        
-        if (dev->ch_client_count > 0) {
-                return -EBUSY;
-        }
-        
-        dev->ch_client_count++;
-        
-        up(&dev->sem);
-        
         return 0;
 }
 
 static int bdtunch_release(struct inode *inode, struct file *filp) {
-        struct bdtun *dev = filp->private_data;
-        
         printk(KERN_DEBUG "bdtun: got device_release on char dev\n");
-        
-        if (down_interruptible(&dev->sem)) {
-                return -ERESTARTSYS;
-        }
-        
-        dev->ch_client_count--;
-
-        up(&dev->sem);
-        
         return 0;
 }
 
@@ -349,11 +320,6 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
         }
         
         /*
-         * Set client count for char device
-         */
-        new->ch_client_count = 0;
-        
-        /*
          * Determine device size
          */
         new->bd_block_size = logical_block_size;
@@ -363,7 +329,6 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
         /*
          * Semaphores stuff like that 
          */
-        sema_init(&new->sem, 1);
         spin_lock_init(&new->bio_in_list_lock);
         spin_lock_init(&new->bio_out_list_lock);
         
