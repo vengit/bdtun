@@ -198,7 +198,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         // Testing: write something silly
         res = min((int)count, 3);
         memcpy(buf, "E!\n", res);
-        
+        return res;
         printk(KERN_DEBUG "bdtun: sent something to the char device.\n");
 
         /*
@@ -230,7 +230,8 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
          */
         entry = list_entry(dev->bio_out_list.next, struct bdtun_bio_list_entry, list);
         list_del_init(&entry->list);
-        list_add_tail(&dev->bio_in_list, &entry->list);
+
+        list_add_tail(&entry->list, &dev->bio_in_list);
         
         spin_unlock_irqrestore(&dev->bio_in_list_lock, flags);
         spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
