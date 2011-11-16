@@ -129,6 +129,8 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
         }
         
         new->bio = bio;
+        // Testing: end this io
+        bio_endio(bio, 0);
         
         spin_lock_irqsave(&dev->bio_out_list_lock, flags);
         list_add_tail(&new->list, &dev->bio_out_list);
@@ -198,9 +200,9 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         // Testing: write something silly
         res = min((int)count, 3);
         memcpy(buf, "E!\n", res);
-        return res;
+        
         printk(KERN_DEBUG "bdtun: sent something to the char device.\n");
-
+        
         /*
          * Lock ordering: first out, then in.
          */
@@ -229,9 +231,11 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
          * of the "out" waiting list
          */
         entry = list_entry(dev->bio_out_list.next, struct bdtun_bio_list_entry, list);
-        list_del_init(&entry->list);
+        //list_del_init(dev->bio_out_list.next);
+        // Delete by hand
+        
 
-        list_add_tail(&entry->list, &dev->bio_in_list);
+        //list_add_tail(&entry->list, &dev->bio_in_list);
         
         spin_unlock_irqrestore(&dev->bio_in_list_lock, flags);
         spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
@@ -263,6 +267,8 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         bio_endio(entry->bio, 0);
         list_del(dev->bio_in_list.next);
         spin_unlock_irqrestore(&dev->bio_in_list_lock, flags);
+        
+        kfree(entry);
         
         printk(KERN_DEBUG "bdtun: successfully finished a bio.\n");
         
