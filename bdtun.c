@@ -256,7 +256,7 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         spin_lock_irqsave(&dev->bio_in_list_lock, flags);
         if (list_empty(&dev->bio_in_list)) {
                 spin_unlock_irqrestore(&dev->bio_in_list_lock, flags);
-                if (wait_event_interruptible(dev->bio_list_in_queue, list_empty(&dev->bio_in_list)) < 0) {
+                if (wait_event_interruptible(dev->bio_list_in_queue, list_empty(&dev->bio_in_list))) {
                         return -ERESTARTSYS;
                 }
                 goto in_list_is_empty;
