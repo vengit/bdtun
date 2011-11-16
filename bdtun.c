@@ -215,6 +215,9 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
                 schedule();
                 finish_wait(&dev->bio_list_out_queue, &wait);
+                if (signal_pending(current)) {
+                        return -ERESTARTSYS;
+                }
                 goto out_list_is_empty;
         }
                 
