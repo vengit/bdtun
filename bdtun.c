@@ -129,8 +129,6 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
         }
         
         new->bio = bio;
-        // Testing: end this io
-        bio_endio(bio, 0);
         
         spin_lock_irqsave(&dev->bio_out_list_lock, flags);
         list_add_tail(&new->list, &dev->bio_out_list);
@@ -210,14 +208,18 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         out_list_is_empty:
         
         prepare_to_wait(&dev->bio_list_out_queue, &wait, TASK_INTERRUPTIBLE);
+        
         spin_lock_irqsave(&dev->bio_out_list_lock, flags);
+        
         if (list_empty(&dev->bio_out_list)) {
                 spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
                 schedule();
                 finish_wait(&dev->bio_list_out_queue, &wait);
+                
                 if (signal_pending(current)) {
                         return -ERESTARTSYS;
                 }
+                
                 goto out_list_is_empty;
         }
                 
@@ -249,17 +251,26 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         struct bdtun *dev = filp->private_data;
         struct bdtun_bio_list_entry *entry;
         unsigned long flags;
-        
+        DEFINE_WAIT(wait);
+
         in_list_is_empty:
         
+        prepare_to_wait(&dev->bio_list_in_queue, &wait, TASK_INTERRUPTIBLE);
+        
         spin_lock_irqsave(&dev->bio_in_list_lock, flags);
+        
         if (list_empty(&dev->bio_in_list)) {
                 spin_unlock_irqrestore(&dev->bio_in_list_lock, flags);
-                if (wait_event_interruptible(dev->bio_list_in_queue, list_empty(&dev->bio_in_list))) {
+                schedule();
+                finish_wait(&dev->bio_list_in_queue, &wait);
+                
+                if (signal_pending(current)) {
                         return -ERESTARTSYS;
                 }
+                
                 goto in_list_is_empty;
         }
+        
         entry = list_entry(dev->bio_in_list.next, struct bdtun_bio_list_entry, list);
         bio_endio(entry->bio, 0);
         list_del(dev->bio_in_list.next);
