@@ -212,9 +212,10 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         if (list_empty(&dev->bio_out_list)) {
                 /* Release locks, wait until someone wakes us up */
                 spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
+                return res;
                 // TODO: Maybe a better solution?
                 // TODO: is this a race condition?
-                if(wait_event_interruptible(dev->bio_list_out_queue, list_empty(&dev->bio_out_list)) < 0) {
+                if(wait_event_interruptible(dev->bio_list_out_queue, list_empty(&dev->bio_out_list))) {
                         return -ERESTARTSYS;
                 }
                 
@@ -231,11 +232,8 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
          * of the "out" waiting list
          */
         entry = list_entry(dev->bio_out_list.next, struct bdtun_bio_list_entry, list);
-        //list_del_init(dev->bio_out_list.next);
-        // Delete by hand
-        
-
-        //list_add_tail(&entry->list, &dev->bio_in_list);
+        list_del_init(dev->bio_out_list.next);
+        list_add_tail(&entry->list, &dev->bio_in_list);
         
         spin_unlock_irqrestore(&dev->bio_in_list_lock, flags);
         spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
