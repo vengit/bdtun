@@ -222,6 +222,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 
                 goto out_list_is_empty;
         }
+        finish_wait(&dev->bio_list_out_queue, &wait);
                 
         /* Ok, the "in" list is not empty, and we're holding the lock.
          * Acquire the "in" spinlock too. This is why we order this
@@ -270,6 +271,7 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                 
                 goto in_list_is_empty;
         }
+        finish_wait(&dev->bio_list_in_queue, &wait);
         
         entry = list_entry(dev->bio_in_list.next, struct bdtun_bio_list_entry, list);
         bio_endio(entry->bio, 0);
