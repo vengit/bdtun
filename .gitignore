@@ -6,3 +6,5 @@ modules.order
 .tmp_versions
 *.mod.c
 *.gch
+10meg.disk
+tenmegdisk

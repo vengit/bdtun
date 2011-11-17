@@ -14,5 +14,6 @@
  */
 struct bdtun_txreq {
 	unsigned char write;
-	unsigned int size;
+	unsigned long offset;
+	unsigned long size;
 };

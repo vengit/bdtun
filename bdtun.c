@@ -197,6 +197,7 @@ static int bdtunch_release(struct inode *inode, struct file *filp) {
 static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *f_pos) {
         struct bdtun *dev = filp->private_data;
         struct bdtun_bio_list_entry *entry;
+        struct bdtun_txreq *req;
         unsigned long pos = 0;
         struct bio_vec *bvec;
         unsigned long flags;
@@ -270,9 +271,12 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                         return -EIO;
                 }
                 /* Transfer command header */
-                *buf = bio_data_dir(entry->bio) == WRITE;
-                buf++;
-                *((unsigned int *)buf) = entry->bio->bi_size;
+                req = (struct bdtun_txreq *)buf;
+                req->write  = bio_data_dir(entry->bio) == WRITE;
+                req->offset = entry->bio->bi_sector * KERNEL_SECTOR_SIZE;
+                req->size   = entry->bio->bi_size;
+                
+                entry->header_transferred = 1;
         }
         
         return count;
@@ -312,7 +316,8 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         spin_unlock_irqrestore(&dev->bio_in_list_lock, flags);
         
         /* Validate write request size */
-        if (count != entry->bio->bi_size) {
+        if ((bio_data_dir(entry->bio) == READ && count != entry->bio->bi_size) ||
+            (bio_data_dir(entry->bio) == WRITE && count != 1)) {
                 /* This is bad, because there is no way to recocer
                  * from this condition at this point. Maybe a re-queue
                  * into the out list would help. */
@@ -323,13 +328,17 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                 return -EIO;
         }
         
+        // TODO: read the completion byte
+        
         /* Copy the data into the bio */
-        bio_for_each_segment(bvec, entry->bio, i) {
-                // TODO: we don't need atomic kmap here. Do we?
-                char *buffer = __bio_kmap_atomic(entry->bio, i, KMAP_USERO);
-                memcpy(buffer, buf+pos, bvec->bv_len);
-                pos += bvec->bv_len;
-                __bio_kunmap_atomic(entry->bio, KMAP_USERO);
+        if (bio_data_dir(entry->bio) == READ) {
+                bio_for_each_segment(bvec, entry->bio, i) {
+                        // TODO: we don't need atomic kmap here. Do we?
+                        char *buffer = __bio_kmap_atomic(entry->bio, i, KMAP_USERO);
+                        memcpy(buffer, buf+pos, bvec->bv_len);
+                        pos += bvec->bv_len;
+                        __bio_kunmap_atomic(entry->bio, KMAP_USERO);
+                }
         }
         
         /* Complete the io request */
