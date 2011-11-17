@@ -496,7 +496,7 @@ static int bdtun_create(char *name, int block_size, size_t size) {
         new->bd_gd->fops = &bdtun_ops;
         new->bd_gd->private_data = new;
         strcpy(new->bd_gd->disk_name, name);
-        set_capacity(new->bd_gd, new->bd_nsectors);
+        set_capacity(new->bd_gd, new->bd_size / KERNEL_SECTOR_SIZE);
         new->bd_gd->queue = queue;
 
         /*
