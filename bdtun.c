@@ -34,7 +34,7 @@ MODULE_LICENSE("GPL");
 struct bdtun_work {
         struct bio *bio;
         struct bdtun *dev;
-        struct work_struct work;        
+        struct work_struct work;
 };
 
 /*
@@ -46,6 +46,7 @@ struct bdtun_work {
 struct bdtun_bio_list_entry {
         struct list_head list;
         struct bio *bio;
+        int header_transferred;
 };
 
 /*
@@ -63,8 +64,14 @@ struct bdtun {
         struct list_head bio_in_list;
         wait_queue_head_t bio_list_out_queue;
         wait_queue_head_t bio_list_in_queue;
+        
+        /*
+         * Acquire locks in this order:
+         * first out, then in, then sem
+         */
         spinlock_t bio_out_list_lock;
         spinlock_t bio_in_list_lock;
+        struct semaphore sem;
         
         /* Block device related stuff*/
         unsigned long bd_size;
@@ -190,21 +197,12 @@ static int bdtunch_release(struct inode *inode, struct file *filp) {
 static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *f_pos) {
         struct bdtun *dev = filp->private_data;
         struct bdtun_bio_list_entry *entry;
+        unsigned long pos = 0;
+        struct bio_vec *bvec;
         unsigned long flags;
-        int res;
         DEFINE_WAIT(wait);
+        int i;
         
-        printk(KERN_DEBUG "bdtun: got device_read on char dev\n");
-        
-        // Testing: write something silly
-        res = min((int)count, 3);
-        memcpy(buf, "E!\n", res);
-        
-        printk(KERN_DEBUG "bdtun: sent something to the char device.\n");
-        
-        /*
-         * Lock ordering: first out, then in.
-         */
         out_list_is_empty:
         
         prepare_to_wait(&dev->bio_list_out_queue, &wait, TASK_INTERRUPTIBLE);
@@ -222,37 +220,72 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 
                 goto out_list_is_empty;
         }
+        
         finish_wait(&dev->bio_list_out_queue, &wait);
-                
-        /* Ok, the "in" list is not empty, and we're holding the lock.
-         * Acquire the "in" spinlock too. This is why we order this
-         * way */
-        spin_lock_irqsave(&dev->bio_in_list_lock, flags);
-        
-        /*
-         * Take the first (the oldest) bio, and insert it to the end
-         * of the "out" waiting list
-         */
         entry = list_entry(dev->bio_out_list.next, struct bdtun_bio_list_entry, list);
-        list_del_init(dev->bio_out_list.next);
-        list_add_tail(&entry->list, &dev->bio_in_list);
-        
-        spin_unlock_irqrestore(&dev->bio_in_list_lock, flags);
+
+        /* Put bio into in list if needed */
+        if (bio_data_dir(entry->bio) == READ || entry->header_transferred) {
+                 /* Yes, we remove it from the out list, because the
+                 * next write will complete it. */
+                list_del_init(dev->bio_out_list.next);
+                
+                /* Ok, the "in" list is not empty, and we're holding the lock.
+                 * Acquire the "in" spinlock too. This is why we order this
+                 * way */
+                spin_lock_irqsave(&dev->bio_in_list_lock, flags);
+                
+                /* Take the first (the oldest) bio, and insert it to the end
+                 * of the "out" waiting list */
+                list_add_tail(&entry->list, &dev->bio_in_list);
+                
+                spin_unlock_irqrestore(&dev->bio_in_list_lock, flags);
+                
+                /* Wake up the waiting writer processes */
+                wake_up(&dev->bio_list_in_queue);
+        }
+
         spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
         
-        /*
-         * Wake up the waiting writer processes
-         */
-        wake_up(&dev->bio_list_in_queue);
+        // TODO: need proper locking here. Use the semaphore.
+        // TODO: maybe we need a semaphore in the structure itself?
         
-        return res;
+        /* Do actual copying, if request size is valid. */
+        if (entry->header_transferred) {
+                /* Validate count */
+                if (count != entry->bio->bi_size) {
+                        return -EIO;
+                }
+                /* Transfer bio data. */
+                bio_for_each_segment(bvec, entry->bio, i) {
+                        // TODO: we don't need atomic kmap here. Do we?
+                        char *buffer = __bio_kmap_atomic(entry->bio, i, KMAP_USERO);
+                        memcpy(buf+pos, buffer, bvec->bv_len);
+                        pos += bvec->bv_len;
+                        __bio_kunmap_atomic(entry->bio, KMAP_USERO);
+                }
+        } else {
+                /* Validate count */
+                if (count != sizeof(struct bdtun_txreq)) {
+                        return -EIO;
+                }
+                /* Transfer command header */
+                *buf = bio_data_dir(entry->bio) == WRITE;
+                buf++;
+                *((unsigned int *)buf) = entry->bio->bi_size;
+        }
+        
+        return count;
 }
 
 static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, loff_t *offset) {
         struct bdtun *dev = filp->private_data;
         struct bdtun_bio_list_entry *entry;
+        struct bio_vec *bvec;
         unsigned long flags;
+        unsigned long pos = 0;
         DEFINE_WAIT(wait);
+        int i;
 
         in_list_is_empty:
         
@@ -274,15 +307,38 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         finish_wait(&dev->bio_list_in_queue, &wait);
         
         entry = list_entry(dev->bio_in_list.next, struct bdtun_bio_list_entry, list);
-        bio_endio(entry->bio, 0);
-        list_del(dev->bio_in_list.next);
+        
+        list_del_init(dev->bio_in_list.next); /* We might re-queue */
         spin_unlock_irqrestore(&dev->bio_in_list_lock, flags);
         
+        /* Validate write request size */
+        if (count != entry->bio->bi_size) {
+                /* This is bad, because there is no way to recocer
+                 * from this condition at this point. Maybe a re-queue
+                 * into the out list would help. */
+                spin_lock_irqsave(&dev->bio_out_list_lock, flags);
+                list_add(&entry->list, &dev->bio_out_list);
+                spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
+                bio_endio(entry->bio, -EIO);
+                return -EIO;
+        }
+        
+        /* Copy the data into the bio */
+        bio_for_each_segment(bvec, entry->bio, i) {
+                // TODO: we don't need atomic kmap here. Do we?
+                char *buffer = __bio_kmap_atomic(entry->bio, i, KMAP_USERO);
+                memcpy(buffer, buf+pos, bvec->bv_len);
+                pos += bvec->bv_len;
+                __bio_kunmap_atomic(entry->bio, KMAP_USERO);
+        }
+        
+        /* Complete the io request */
+        bio_endio(entry->bio, 0);
+        
+        /* Free the list entry */
         kfree(entry);
         
-        printk(KERN_DEBUG "bdtun: successfully finished a bio.\n");
-        
-        // Pretend a successful write to avoid locked process
+        /* Tell the user process that the IO has been completed */
         return count;
 }
 
