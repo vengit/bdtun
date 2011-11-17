@@ -405,7 +405,7 @@ static struct bdtun *bdtun_find_device(char *name) {
 /*
  *  Commands to manage devices
  */
-static int bdtun_create(char *name, int logical_block_size, size_t size) {
+static int bdtun_create(char *name, int block_size, size_t size) {
         struct bdtun *new;
         struct request_queue *queue;
         int error;
@@ -433,9 +433,9 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
         /*
          * Determine device size
          */
-        new->bd_block_size = logical_block_size;
-        new->bd_nsectors   = size / logical_block_size; // Size is just an approximate.
-        new->bd_size       = new->bd_nsectors * logical_block_size;
+        new->bd_block_size = block_size;
+        new->bd_nsectors   = size / block_size; // Size is just an approximate.
+        new->bd_size       = new->bd_nsectors * block_size;
         
         /*
          * Semaphores stuff like that 
@@ -464,17 +464,15 @@ static int bdtun_create(char *name, int logical_block_size, size_t size) {
          * Get a request queue.
          */
         queue = blk_alloc_queue(GFP_KERNEL);
-        if (!queue) {
-        }
-        queue->queuedata = new;
-        blk_queue_make_request(queue, bdtun_make_request);
 
         if (queue == NULL) {
                 goto vfree_adq;
         }
         
-        blk_queue_logical_block_size(queue, logical_block_size);
-
+        queue->queuedata = new;
+        blk_queue_logical_block_size(queue, block_size);
+        blk_queue_make_request(queue, bdtun_make_request);
+        
         /*
          * Get registered.
          */
@@ -630,7 +628,7 @@ static void bdtun_list(char **ptrs, int offset, int maxdevices) {
  * Initialize module
  */
 static int __init bdtun_init(void) {
-        bdtun_create("bdtuna", 512, 10240000);
+        bdtun_create("bdtuna", 4096, 10240000);
         return 0;
 }
 

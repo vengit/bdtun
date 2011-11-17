@@ -58,7 +58,7 @@ int main(int argc, char *argv[]) {
                         printf("Error reading bdtun character device: got invalid request size: %d\n", ret);
                         return -1;
                 }
-                
+                printf("Request size: %lu\n", req.size);
                 buf = malloc(req.size);
                 if (!buf) {
                         printf("Unable to allocate memory.\n");
