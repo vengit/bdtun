@@ -269,11 +269,19 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         if (entry->header_transferred) {
                 /* Transfer bio data. */
                 bio_for_each_segment(bvec, entry->bio, i) {
-                        // TODO: we don't need atomic kmap here. Do we?
-                        char *buffer = __bio_kmap_atomic(entry->bio, i, KMAP_USERO);
+                        // TODO: we don't need atomic kmap here. Do we? Nope. Result: Oops
+                        /*char *buffer = __bio_kmap_atomic(entry->bio, i, KM_USER0);
                         memcpy(buf+pos, buffer, bvec->bv_len);
                         pos += bvec->bv_len;
-                        __bio_kunmap_atomic(entry->bio, KMAP_USERO);
+                        __bio_kunmap_atomic(entry->bio, KM_USER0);*/
+                        void *kaddr = kmap(bvec->bv_page);
+                        if(copy_to_user(buf+pos, kaddr+bvec->bv_offset, bvec->bv_len) != 0) {
+                                // TODO: error handling
+                                printk(KERN_WARNING "bdtun: error copying data to user\n");
+                                return -EFAULT;
+                        }
+                        kunmap(bvec->bv_page);
+                        pos += bvec->bv_len;
                 }
         } else {
                 /* Transfer command header */
@@ -340,10 +348,20 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         if (bio_data_dir(entry->bio) == READ) {
                 bio_for_each_segment(bvec, entry->bio, i) {
                         // TODO: we don't need atomic kmap here. Do we?
-                        char *buffer = __bio_kmap_atomic(entry->bio, i, KMAP_USERO);
-                        memcpy(buffer, buf+pos, bvec->bv_len);
+                        // char *buffer = __bio_kmap_atomic(entry->bio, i, KMAP_USERO);
+                        // memcpy(buffer, buf+pos, bvec->bv_len);
+                        // pos += bvec->bv_len;
+                        // __bio_kunmap_atomic(entry->bio, KMAP_USERO);
+                        void *kaddr = kmap(bvec->bv_page);
+                        if(copy_from_user(kaddr+bvec->bv_offset, buf+pos, bvec->bv_len) != 0) {
+                                // TODO: error handling
+                                printk(KERN_WARNING "bdtun: error copying data from user\n");
+                                kunmap(bvec->bv_page);
+                                bio_endio(entry->bio, -1);
+                                return -EFAULT;
+                        }
+                        kunmap(bvec->bv_page);
                         pos += bvec->bv_len;
-                        __bio_kunmap_atomic(entry->bio, KMAP_USERO);
                 }
         }
         
