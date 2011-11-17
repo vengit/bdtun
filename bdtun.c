@@ -226,6 +226,19 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         finish_wait(&dev->bio_list_out_queue, &wait);
         entry = list_entry(dev->bio_out_list.next, struct bdtun_bio_list_entry, list);
 
+        /* Validate request here to avoid queue manipulation on error */
+        if (entry->header_transferred) {
+                if (count != entry->bio->bi_size) {
+                        spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
+                        return -EIO;
+                }
+        } else {
+                if (count != sizeof(struct bdtun_txreq)) {
+                        spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
+                        return -EIO;
+                }
+        }
+
         /* Put bio into in list if needed */
         if (bio_data_dir(entry->bio) == READ || entry->header_transferred) {
                  /* Yes, we remove it from the out list, because the
@@ -254,10 +267,6 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         
         /* Do actual copying, if request size is valid. */
         if (entry->header_transferred) {
-                /* Validate count */
-                if (count != entry->bio->bi_size) {
-                        return -EIO;
-                }
                 /* Transfer bio data. */
                 bio_for_each_segment(bvec, entry->bio, i) {
                         // TODO: we don't need atomic kmap here. Do we?
@@ -267,10 +276,6 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                         __bio_kunmap_atomic(entry->bio, KMAP_USERO);
                 }
         } else {
-                /* Validate count */
-                if (count != sizeof(struct bdtun_txreq)) {
-                        return -EIO;
-                }
                 /* Transfer command header */
                 req = (struct bdtun_txreq *)buf;
                 req->write  = bio_data_dir(entry->bio) == WRITE;
@@ -607,7 +612,7 @@ static void bdtun_list(char **ptrs, int offset, int maxdevices) {
  * Initialize module
  */
 static int __init bdtun_init(void) {
-        bdtun_create("bdtuna", 512, 10000000);
+        bdtun_create("bdtuna", 512, 10240000);
         return 0;
 }
 

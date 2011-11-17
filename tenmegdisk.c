@@ -13,7 +13,7 @@
 #include "commands.h"
 
 #define IMGFILE "10meg.disk"
-#define DISKSIZE 10240
+#define DISKSIZE 10240000
 #define ever (;;)
 #define REQSIZE sizeof(struct bdtun_txreq)
 
