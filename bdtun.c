@@ -136,6 +136,7 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
         }
         
         new->bio = bio;
+        new->header_transferred = 0;
         
         spin_lock_irqsave(&dev->bio_out_list_lock, flags);
         list_add_tail(&new->list, &dev->bio_out_list);
