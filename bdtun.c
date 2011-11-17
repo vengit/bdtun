@@ -470,7 +470,9 @@ static int bdtun_create(char *name, int block_size, size_t size) {
         }
         
         queue->queuedata = new;
+        blk_queue_physical_block_size(queue, block_size);
         blk_queue_logical_block_size(queue, block_size);
+        blk_limits_io_min(&queue->limits, block_size);
         blk_queue_make_request(queue, bdtun_make_request);
         
         /*
@@ -628,7 +630,7 @@ static void bdtun_list(char **ptrs, int offset, int maxdevices) {
  * Initialize module
  */
 static int __init bdtun_init(void) {
-        bdtun_create("bdtuna", 4096, 10240000);
+        bdtun_create("bdtuna", 4096, 102400000);
         return 0;
 }
 

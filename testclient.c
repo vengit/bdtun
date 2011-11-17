@@ -12,42 +12,37 @@
 
 #include "commands.h"
 
-#define IMGFILE "10meg.disk"
-#define DISKSIZE 10240000
 #define ever (;;)
 #define REQSIZE sizeof(struct bdtun_txreq)
 
 void usage() {
-        printf("Usage: tenmegdisk <bdtun chardev>\n\n");
+        printf("Usage: tenmegdisk <bdtun chardev> <disk image>\n\n");
 }
 
 int main(int argc, char *argv[]) {
+        char ans = BDTUN_RQ_COMPLETE;
         struct bdtun_txreq req;
+        char *filename;
         int bdtunch;
         char *buf;
-        char ans = BDTUN_RQ_COMPLETE;
         int img;
         int ret;
         
-        if (argc != 2) {
+        if (argc != 3) {
                 usage();
                 return 1;
         }
         
+        filename = argv[2];
+        
         /* Open the disk image */
-        if((img = open(IMGFILE, O_RDWR | O_CREAT, 00644)) < 0) {
-                printf("Unable to open disk image file " IMGFILE "\n");
+        if((img = open(filename, O_RDWR, 00644)) < 0) {
+                printf("Unable to open disk image file %s\n", filename);
                 return 1;
         }
         
         if((bdtunch = open(argv[1], O_RDWR)) < 0) {
                 printf("Unable to open bdtun character device file %s\n", argv[1]);
-                return 1;
-        }
-        
-        /* Truncate to 10 megabytes*/
-        if(ftruncate(img, DISKSIZE) < 0) {
-                printf("Unable to truncate image file " IMGFILE "\n");
                 return 1;
         }
         

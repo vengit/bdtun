@@ -4,10 +4,10 @@ PWD := $(shell pwd)
 
 all:
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
-	$(MAKE) tenmegdisk
+	$(MAKE) testclient
 
-tenmegdisk: tenmegdisk.c
-	gcc -o tenmegdisk tenmegdisk.c
+testclient: testclient.c
+	gcc -o testclient testclient.c
 
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
