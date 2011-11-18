@@ -126,7 +126,6 @@ static void bdtun_do_add_disk(struct work_struct *work)        {
  */
 static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
         struct bdtun *dev = q->queuedata;
-        unsigned long flags;
         
         // Constant TODO: We need to free this. Check twice. Seriously.
         struct bdtun_bio_list_entry *new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_ATOMIC);
@@ -138,9 +137,9 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
         new->bio = bio;
         new->header_transferred = 0;
         
-        spin_lock_irqsave(&dev->bio_out_list_lock, flags);
+        spin_lock_bh(&dev->bio_out_list_lock);
         list_add_tail(&new->list, &dev->bio_out_list);
-        spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
+        spin_unlock_bh(&dev->bio_out_list_lock);
         
         wake_up(&dev->bio_list_out_queue);
         
@@ -209,10 +208,10 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         
         prepare_to_wait(&dev->bio_list_out_queue, &wait, TASK_INTERRUPTIBLE);
         
-        spin_lock_irqsave(&dev->bio_out_list_lock, flags);
+        spin_lock_bh(&dev->bio_out_list_lock);
         
         if (list_empty(&dev->bio_out_list)) {
-                spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
+                spin_unlock_bh(&dev->bio_out_list_lock);
                 schedule();
                 finish_wait(&dev->bio_list_out_queue, &wait);
                 
@@ -229,12 +228,12 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         /* Validate request here to avoid queue manipulation on error */
         if (entry->header_transferred) {
                 if (count != entry->bio->bi_size) {
-                        spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
+                        spin_unlock_bh(&dev->bio_out_list_lock);
                         return -EIO;
                 }
         } else {
                 if (count != sizeof(struct bdtun_txreq)) {
-                        spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
+                        spin_unlock_bh(&dev->bio_out_list_lock);
                         return -EIO;
                 }
         }
@@ -248,19 +247,19 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 /* Ok, the "in" list is not empty, and we're holding the lock.
                  * Acquire the "in" spinlock too. This is why we order this
                  * way */
-                spin_lock_irqsave(&dev->bio_in_list_lock, flags);
+                spin_lock_bh(&dev->bio_in_list_lock);
                 
                 /* Take the first (the oldest) bio, and insert it to the end
                  * of the "out" waiting list */
                 list_add_tail(&entry->list, &dev->bio_in_list);
                 
-                spin_unlock_irqrestore(&dev->bio_in_list_lock, flags);
+                spin_unlock_bh(&dev->bio_in_list_lock);
                 
                 /* Wake up the waiting writer processes */
                 wake_up(&dev->bio_list_in_queue);
         }
 
-        spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
+        spin_unlock_bh(&dev->bio_out_list_lock);
         
         // TODO: need proper locking here. Use the semaphore.
         // TODO: maybe we need a semaphore in the structure itself?
@@ -300,7 +299,6 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         struct bdtun *dev = filp->private_data;
         struct bdtun_bio_list_entry *entry;
         struct bio_vec *bvec;
-        unsigned long flags;
         unsigned long pos = 0;
         DEFINE_WAIT(wait);
         int i;
@@ -309,10 +307,10 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         
         prepare_to_wait(&dev->bio_list_in_queue, &wait, TASK_INTERRUPTIBLE);
         
-        spin_lock_irqsave(&dev->bio_in_list_lock, flags);
+        spin_lock_bh(&dev->bio_in_list_lock);
         
         if (list_empty(&dev->bio_in_list)) {
-                spin_unlock_irqrestore(&dev->bio_in_list_lock, flags);
+                spin_unlock_bh(&dev->bio_in_list_lock);
                 schedule();
                 finish_wait(&dev->bio_list_in_queue, &wait);
                 
@@ -327,7 +325,7 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         entry = list_entry(dev->bio_in_list.next, struct bdtun_bio_list_entry, list);
         
         list_del_init(dev->bio_in_list.next); /* We might re-queue */
-        spin_unlock_irqrestore(&dev->bio_in_list_lock, flags);
+        spin_unlock_bh(&dev->bio_in_list_lock);
         
         /* Validate write request size */
         if ((bio_data_dir(entry->bio) == READ && count != entry->bio->bi_size) ||
@@ -335,9 +333,9 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                 /* This is bad, because there is no way to recocer
                  * from this condition at this point. Maybe a re-queue
                  * into the out list would help. */
-                spin_lock_irqsave(&dev->bio_out_list_lock, flags);
+                spin_lock_bh(&dev->bio_out_list_lock);
                 list_add(&entry->list, &dev->bio_out_list);
-                spin_unlock_irqrestore(&dev->bio_out_list_lock, flags);
+                spin_unlock_bh(&dev->bio_out_list_lock);
                 bio_endio(entry->bio, -EIO);
                 return -EIO;
         }
