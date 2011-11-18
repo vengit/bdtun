@@ -127,7 +127,6 @@ static void bdtun_do_add_disk(struct work_struct *work)        {
 static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
         struct bdtun *dev = q->queuedata;
         
-        // Constant TODO: We need to free this. Check twice. Seriously.
         struct bdtun_bio_list_entry *new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_ATOMIC);
         
         if (!new) {
@@ -200,7 +199,6 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         struct bdtun_txreq *req;
         unsigned long pos = 0;
         struct bio_vec *bvec;
-        unsigned long flags;
         DEFINE_WAIT(wait);
         int i;
         
@@ -268,11 +266,6 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         if (entry->header_transferred) {
                 /* Transfer bio data. */
                 bio_for_each_segment(bvec, entry->bio, i) {
-                        // TODO: we don't need atomic kmap here. Do we? Nope. Result: Oops
-                        /*char *buffer = __bio_kmap_atomic(entry->bio, i, KM_USER0);
-                        memcpy(buf+pos, buffer, bvec->bv_len);
-                        pos += bvec->bv_len;
-                        __bio_kunmap_atomic(entry->bio, KM_USER0);*/
                         void *kaddr = kmap(bvec->bv_page);
                         if(copy_to_user(buf+pos, kaddr+bvec->bv_offset, bvec->bv_len) != 0) {
                                 // TODO: error handling
@@ -345,11 +338,6 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         /* Copy the data into the bio */
         if (bio_data_dir(entry->bio) == READ) {
                 bio_for_each_segment(bvec, entry->bio, i) {
-                        // TODO: we don't need atomic kmap here. Do we?
-                        // char *buffer = __bio_kmap_atomic(entry->bio, i, KMAP_USERO);
-                        // memcpy(buffer, buf+pos, bvec->bv_len);
-                        // pos += bvec->bv_len;
-                        // __bio_kunmap_atomic(entry->bio, KMAP_USERO);
                         void *kaddr = kmap(bvec->bv_page);
                         if(copy_from_user(kaddr+bvec->bv_offset, buf+pos, bvec->bv_len) != 0) {
                                 // TODO: error handling
@@ -468,9 +456,8 @@ static int bdtun_create(char *name, int block_size, size_t size) {
         }
         
         queue->queuedata = new;
-        blk_queue_physical_block_size(queue, block_size);
         blk_queue_logical_block_size(queue, block_size);
-        blk_limits_io_min(&queue->limits, block_size);
+        blk_queue_io_min(queue, block_size);
         blk_queue_make_request(queue, bdtun_make_request);
         
         /*
@@ -493,9 +480,9 @@ static int bdtun_create(char *name, int block_size, size_t size) {
         new->bd_gd->first_minor = 0;
         new->bd_gd->fops = &bdtun_ops;
         new->bd_gd->private_data = new;
+        new->bd_gd->queue = queue;
         strcpy(new->bd_gd->disk_name, name);
         set_capacity(new->bd_gd, new->bd_size / KERNEL_SECTOR_SIZE);
-        new->bd_gd->queue = queue;
 
         /*
          * Initialize character device
