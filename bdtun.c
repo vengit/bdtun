@@ -59,6 +59,8 @@ struct bdtun {
         /* character device related */
         struct cdev ch_dev;
         int ch_major;
+        struct class *chclass;
+        struct device *dev_chclass;
         
         struct list_head bio_out_list;
         struct list_head bio_in_list;
@@ -504,6 +506,22 @@ static int bdtun_create(char *name, int block_size, size_t size) {
         }
         
         /*
+         * Add a device node
+         */
+        new->chclass     = class_create(THIS_MODULE, "bdtun");
+        if (IS_ERR(new->chclass)) {
+                printk(KERN_NOTICE "bdtun: error setting up device class\n");
+                goto vfree_adq_unreg;
+        }
+        
+        new->dev_chclass = device_create(new->chclass, NULL, MKDEV(new->ch_major, 0), NULL, "bdtun");
+        if (IS_ERR(new->dev_chclass)) {
+                printk(KERN_NOTICE "bdtun: error setting up device object\n");
+                goto vfree_adq_unreg;
+        }
+        // TODO: unregister this!!!
+        
+        /*
          * Add device to the list
          */
         list_add_tail(&new->list, &device_list);
@@ -574,6 +592,10 @@ static int bdtun_remove(char *name) {
         unregister_chrdev_region(dev->ch_major, 1);
         cdev_del(&dev->ch_dev);
         printk(KERN_NOTICE "bdtun: device shutdown finished\n");
+        
+        /* Unreg device object and class if needed TODO: only if needed */
+        device_destroy(dev->chclass, MKDEV(dev->ch_major, 0));
+        class_destroy(dev->chclass);
         
         /* Unlink and free device structure */
         list_del(&dev->list);
