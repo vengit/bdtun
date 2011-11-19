@@ -50,6 +50,11 @@ struct bdtun_bio_list_entry {
 };
 
 /*
+ * Device class for char device registration
+ */
+struct class *chclass;
+
+/*
  * BDTun device structure
  */
 struct bdtun {
@@ -59,7 +64,6 @@ struct bdtun {
         /* character device related */
         struct cdev ch_dev;
         int ch_major;
-        struct class *chclass;
         struct device *dev_chclass;
         
         struct list_head bio_out_list;
@@ -508,13 +512,8 @@ static int bdtun_create(char *name, int block_size, size_t size) {
         /*
          * Add a device node
          */
-        new->chclass     = class_create(THIS_MODULE, "bdtun");
-        if (IS_ERR(new->chclass)) {
-                printk(KERN_NOTICE "bdtun: error setting up device class\n");
-                goto vfree_adq_unreg;
-        }
         
-        new->dev_chclass = device_create(new->chclass, NULL, MKDEV(new->ch_major, 0), NULL, "bdtun");
+        new->dev_chclass = device_create(chclass, NULL, MKDEV(new->ch_major, 0), NULL, charname);
         if (IS_ERR(new->dev_chclass)) {
                 printk(KERN_NOTICE "bdtun: error setting up device object\n");
                 goto vfree_adq_unreg;
@@ -594,8 +593,7 @@ static int bdtun_remove(char *name) {
         printk(KERN_NOTICE "bdtun: device shutdown finished\n");
         
         /* Unreg device object and class if needed TODO: only if needed */
-        device_destroy(dev->chclass, MKDEV(dev->ch_major, 0));
-        class_destroy(dev->chclass);
+        device_destroy(chclass, MKDEV(dev->ch_major, 0));
         
         /* Unlink and free device structure */
         list_del(&dev->list);
@@ -637,6 +635,12 @@ static void bdtun_list(char **ptrs, int offset, int maxdevices) {
  * Initialize module
  */
 static int __init bdtun_init(void) {
+        chclass = class_create(THIS_MODULE, "bdtun");
+        if (IS_ERR(chclass)) {
+                printk(KERN_NOTICE "bdtun: error setting up device class\n");
+                // TODO: corretct error values throughout the code
+                return -ENOMEM;
+        }
         bdtun_create("bdtuna", 4096, 102400000);
         return 0;
 }
@@ -652,6 +656,7 @@ static void __exit bdtun_exit(void) {
         destroy_workqueue(add_disk_q);
         
         bdtun_remove("bdtuna");
+        class_destroy(chclass);
 }
 
 module_init(bdtun_init);
