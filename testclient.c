@@ -9,8 +9,9 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <stdlib.h>
+#include <inttypes.h>
 
-#include "commands.h"
+#include "bdtun.h"
 
 #define ever (;;)
 #define REQSIZE sizeof(struct bdtun_txreq)

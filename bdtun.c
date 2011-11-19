@@ -21,7 +21,6 @@
 #include <linux/spinlock.h>
 
 #include "bdtun.h"
-#include "commands.h"
 
 MODULE_LICENSE("GPL");
 
@@ -52,7 +51,9 @@ struct bdtun_bio_list_entry {
 /*
  * Device class for char device registration
  */
-struct class *chclass;
+static struct class *chclass;
+static struct device *ctrl_device;
+static int ctrl_major;
 
 /*
  * BDTun device structure
@@ -64,7 +65,7 @@ struct bdtun {
         /* character device related */
         struct cdev ch_dev;
         int ch_major;
-        struct device *dev_chclass;
+        struct device *ch_device;
         
         struct list_head bio_out_list;
         struct list_head bio_in_list;
@@ -378,6 +379,47 @@ static struct file_operations bdtunch_ops = {
 };
 
 /*
+ * Control device functions
+ */
+static int ctrl_open(struct inode *inode, struct file *filp) {
+        /* Allow only one open: grab lock, increase count */
+        printk(KERN_DEBUG "bdtun: got device_open on master dev\n");
+        return 0;
+}
+
+static int ctrl_release(struct inode *inode, struct file *filp) {
+        /* Grab lock, decrement usage count */
+        printk(KERN_DEBUG "bdtun: got device_release on master dev\n");
+        return 0;
+}
+
+static ssize_t ctrl_read(struct file *filp, char *buf, size_t count, loff_t *f_pos) {
+        return 0;
+}
+
+static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff_t *offset) {
+        // TODO: implement a request-response type of protocol
+        /* Read a request */
+        /* Do stuff, maybe fail doing it */
+        /* Put a response in place */
+        
+        // TODO: this doesn't need to be a list, only one element is
+        // Required.
+        
+        return 0;
+}
+
+/*
+ * Operations on control device
+ */
+static struct file_operations ctrl_ops = {
+        .read    = ctrl_read,
+        .write   = ctrl_write,
+        .open    = ctrl_open,
+        .release = ctrl_release
+};
+
+/*
  * Device list management auxilliary functions
  */
 
@@ -397,7 +439,7 @@ static struct bdtun *bdtun_find_device(char *name) {
 /*
  *  Commands to manage devices
  */
-static int bdtun_create(char *name, int block_size, size_t size) {
+static int bdtun_create(char *name, int block_size, uint64_t size) {
         struct bdtun *new;
         struct request_queue *queue;
         int error;
@@ -513,12 +555,11 @@ static int bdtun_create(char *name, int block_size, size_t size) {
          * Add a device node
          */
         
-        new->dev_chclass = device_create(chclass, NULL, MKDEV(new->ch_major, 0), NULL, charname);
-        if (IS_ERR(new->dev_chclass)) {
+        new->ch_device = device_create(chclass, NULL, MKDEV(new->ch_major, 0), NULL, charname);
+        if (IS_ERR(new->ch_device)) {
                 printk(KERN_NOTICE "bdtun: error setting up device object\n");
                 goto vfree_adq_unreg;
         }
-        // TODO: unregister this!!!
         
         /*
          * Add device to the list
@@ -558,6 +599,7 @@ static int bdtun_create(char *name, int block_size, size_t size) {
         /*
          * "catch exceptions"
          */
+        // TODO: there's soo many stuff missing here.
         vfree_adq_unreg:
                 unregister_blkdev(bd_major, "bdtun");
         vfree_adq:
@@ -605,12 +647,12 @@ static int bdtun_remove(char *name) {
 
 static int bdtun_info(char *name, struct bdtun_info *device_info) {
         struct bdtun *dev = bdtun_find_device(name);
-        strncpy(device_info->name, name, 32);
-        device_info->capacity = dev->bd_size;
+        device_info->bd_name = name;
+        device_info->bd_size = dev->bd_size;
         return 0;
 }
 
-static void bdtun_list(char **ptrs, int offset, int maxdevices) {
+static void bdtun_list(char **ptrs, size_t offset, size_t maxdevices) {
         struct list_head *ptr;
         struct bdtun *entry;
         int i;
@@ -635,14 +677,52 @@ static void bdtun_list(char **ptrs, int offset, int maxdevices) {
  * Initialize module
  */
 static int __init bdtun_init(void) {
+        int ch_num;
+        int error;
+        
         chclass = class_create(THIS_MODULE, "bdtun");
         if (IS_ERR(chclass)) {
                 printk(KERN_NOTICE "bdtun: error setting up device class\n");
                 // TODO: corretct error values throughout the code
-                return -ENOMEM;
+                goto out_err;
         }
+
+        /*
+         * Initialize master character device
+         */
+        printk(KERN_INFO "bdtun: setting up char device\n");
+        // TODO: seriously, shouldn't we deallocate this???
+        if (alloc_chrdev_region(&ch_num, 0, 1, "bdtun") != 0) {
+                // TODO: correct printk message levels throughout the code
+                printk(KERN_WARNING "bdtun: could not allocate control device number\n");
+                goto out_destroy_class;
+        }
+        ctrl_major = MAJOR(ch_num);
+        cdev_init(&ctrl_dev, &ctrl_ops);
+        ctrl_dev.owner = THIS_MODULE;
+        error = cdev_add(&ctrl_dev, ch_num ,1);
+        if (error) {
+                printk(KERN_NOTICE "bdtun: error setting up control device\n");
+                goto out_destroy_class;
+        }
+        
+        /*
+         * Add a device node
+         */
+        
+        ctrl_device = device_create(chclass, NULL, MKDEV(ctrl_major, 0), NULL, "bdtun");
+        if (IS_ERR(ctrl_device)) {
+                printk(KERN_NOTICE "bdtun: error setting up control device object\n");
+                goto out_destroy_class;
+        }
+
         bdtun_create("bdtuna", 4096, 102400000);
         return 0;
+
+        out_destroy_class:
+                class_destroy(chclass);
+        out_err:
+                return -ENOMEM;
 }
 
 /*
