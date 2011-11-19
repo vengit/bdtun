@@ -8,7 +8,7 @@ module:
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
 
 testclient: lib testclient.c
-	gcc -o testclient testclient.c
+	gcc -o testclient bdtunlib.o testclient.c
 
 cli: lib bdtun_cli.c
 	gcc -o bdtun bdtunlib.o bdtun_cli.c

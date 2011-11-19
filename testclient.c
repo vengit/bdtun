@@ -49,51 +49,36 @@ int main(int argc, char *argv[]) {
         
         /* Start "event loop" */
         for ever {
+                
                 /* Read a request */
-                if((ret = read(bdtunch, &req, REQSIZE)) != REQSIZE) {
-                        printf("Error reading bdtun character device: got invalid request size: %d\n", ret);
+                if((ret = bdtun_read_request(bdtunch, &req)) != 0) {
+                        printf("Counld not get request from device.\n");
                         return -1;
                 }
-                printf("Request size: %lu\n", req.size);
-                buf = malloc(req.size);
-                if (!buf) {
-                        printf("Unable to allocate memory.\n");
-                        return 1;
-                }
                 
+                /* Set position in backing file */
                 if(lseek(img, req.offset, SEEK_SET) != req.offset) {
                         printf("Unable to set disk image position.\n");
                         return 1;
                 }
 
+                /* Reqd / write backing file */
                 if (req.write) {
-                        if ((ret = read(bdtunch, buf, req.size)) != req.size) {
-                                printf("Unable to read data from bdtun character device: %d\n", ret);
-                                return 1;
-                        }
-                        if((ret = write(img, buf, req.size)) != req.size) {
+                        if((ret = write(img, req.buf, req.size)) != req.size) {
                                 printf("Unable to write disk image: %d\n", ret);
                                 return 1;
                         }
-                        if((ret = write(bdtunch, &ans, 1)) != 1) {
-                                printf("Unable to signal completion on write: %d\n", ret);
-                        }
                 } else {
-                        if((ret = read(img, buf, req.size)) != req.size) {
+                        if((ret = read(img, req.buf, req.size)) != req.size) {
                                 printf("Unable to read from disk image: %d\n", ret);
-                                return 1;
-                        }
-                        // TODO: command support in kernel module
-                        /*if((ret = write(bdtunch, &ans, 1)) != 1) {
-                                printf("Unable to signal completion on read: %d\n", ret);
-                        }*/
-                        if ((ret = write(bdtunch, buf, req.size)) != req.size) {
-                                printf("Unable to write data to bdtun character device: %d\n", ret);
                                 return 1;
                         }
                 }
                 
-                free(buf);
+                /* Complete request */
+                if(bdtun_complete_request()) {
+                        printf("Unable to signal completion on write: %d\n", ret);
+                }
         }
         
         return 0;

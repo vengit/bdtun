@@ -85,6 +85,7 @@ struct bdtun {
         int bd_block_size;
         int bd_nsectors;
         struct gendisk *bd_gd;
+        struct blk_queue_tags *bd_tags;
 };
 
 /*

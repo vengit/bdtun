@@ -8,7 +8,7 @@
 /*
  * Read a transfer request form a tunnel character device
  */
-int bdtun_read_bio(int fd, struct bdtun_txreq *rq) {
+int bdtun_read_request(int fd, struct bdtun_txreq *rq) {
         ssize_t size, res;
         size_t count;
         size_t bufsize = 0;
@@ -47,16 +47,19 @@ int bdtun_read_bio(int fd, struct bdtun_txreq *rq) {
  * If it was a read request, the buf member must contain the
  * data read by the user process.
  */
-int bdtun_complete_bio(int fd, const void *buf, size_t count) {
+int bdtun_complete_request(int fd, struct bdtun_txreq *req) {
         ssize_t res, size;
         
-        res = write(fd, buf, count);
-        
+        if (req->write) {
+                res = write(fd, req->buf, req->size);
+        } else {
+                res = write(fd, "\0x06", 1);
+        }
         if (res < 0) {
                 return res;
-        } else {
-                return 0;
         }
+        
+        return 0;
 }
 
 /*
