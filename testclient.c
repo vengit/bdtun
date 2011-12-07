@@ -63,7 +63,7 @@ int main(int argc, char *argv[]) {
                 }
 
                 /* Reqd / write backing file */
-                if (req.write) {
+                if (req.flags & REQ_WRITE) {
                         if((ret = write(img, req.buf, req.size)) != req.size) {
                                 printf("Unable to write disk image: %d\n", ret);
                                 return 1;

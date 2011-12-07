@@ -1,3 +1,5 @@
+#include <linux/blk_types.h>
+
 /*
  * Device management commands
  */
@@ -14,7 +16,7 @@
  * Block tunnel transfer requests
  */
 struct bdtun_txreq {
-	unsigned char write;
+	unsigned char flags;
 	unsigned long offset;
 	unsigned long size;
 	char *buf;

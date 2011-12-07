@@ -13,9 +13,9 @@ testclient: lib testclient.c
 cli: lib bdtun_cli.c
 	gcc -o bdtun bdtunlib.o bdtun_cli.c
 
-lib:
+lib: bdtunlib.c
 	gcc -c -o bdtunlib.o bdtunlib.c
 
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
-	rm -f testclient
+	rm -f testclient bdtunlib.o

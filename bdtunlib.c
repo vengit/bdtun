@@ -31,7 +31,7 @@ int bdtun_read_request(int fd, struct bdtun_txreq *rq) {
         
         rq->buf = buf;
         
-        if (!rq->write) {
+        if (!rq->flags & REQ_WRITE) {
                 res = read(fd, rq->buf, rq->size);
                 if (res < 0) {
                         return res;
@@ -50,7 +50,7 @@ int bdtun_read_request(int fd, struct bdtun_txreq *rq) {
 int bdtun_complete_request(int fd, struct bdtun_txreq *req) {
         ssize_t res, size;
         
-        if (req->write) {
+        if (req->flags & REQ_WRITE) {
                 res = write(fd, req->buf, req->size);
         } else {
                 res = write(fd, "\0x06", 1);
