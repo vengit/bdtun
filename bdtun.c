@@ -332,13 +332,11 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         /* Validate write request size */
         if ((bio_data_dir(entry->bio) == READ && count != entry->bio->bi_size) ||
             (bio_data_dir(entry->bio) == WRITE && count != 1)) {
-                /* This is bad, because there is no way to recover
-                 * from this condition at this point. Maybe a re-queue
-                 * into the out list would help. */
                 spin_lock_bh(&dev->bio_out_list_lock);
                 list_add(&entry->list, &dev->bio_out_list);
                 spin_unlock_bh(&dev->bio_out_list_lock);
-                bio_endio(entry->bio, -EIO);
+                printk(KERN_WARNING "bdtun: invalid request size from user returning -EIO and re-queueing bio.\n");
+                // bio_endio(entry->bio, -EIO);
                 return -EIO;
         }
         
