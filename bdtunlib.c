@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <error.h>
 #include <inttypes.h>
+#include <errno.h>
 
 #include "bdtun.h"
 
@@ -14,17 +15,17 @@ int bdtun_read_request(int fd, struct bdtun_txreq *rq) {
         size_t bufsize = 0;
         static char *buf = NULL;
         
-        size = sizeof(struct bdtun_txreq) - sizeof(char *);
-        res = read(fd, rq,  size);
+        size = sizeof(struct bdtun_txreq);
+        res = read(fd, rq, size);
         if (res < 0) {
                 return res;
         }
 
-        /* If the buffer size is less than the reques, then realloc */
+        /* If the buffer size is less than the request, then realloc */
         if (bufsize < rq->size) {
                 buf = realloc(buf, rq->size);
                 if (buf == NULL) {
-                        return -1;
+                        return -ENOMEM;
                 }
                 bufsize = rq->size;
         }

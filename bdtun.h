@@ -16,7 +16,7 @@
  * Block tunnel transfer requests
  */
 struct bdtun_txreq {
-	unsigned char flags;
+	unsigned long flags;
 	unsigned long offset;
 	unsigned long size;
 	char *buf;

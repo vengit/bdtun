@@ -38,12 +38,12 @@ int main(int argc, char *argv[]) {
         
         /* Open the disk image */
         if((img = open(filename, O_RDWR, 00644)) < 0) {
-                printf("Unable to open disk image file %s\n", filename);
+                printf("(1) Unable to open disk image file %s\n", filename);
                 return 1;
         }
         
         if((bdtunch = open(argv[1], O_RDWR)) < 0) {
-                printf("Unable to open bdtun character device file %s\n", argv[1]);
+                printf("(2) Unable to open bdtun character device file %s\n", argv[1]);
                 return 1;
         }
         
@@ -52,32 +52,32 @@ int main(int argc, char *argv[]) {
                 
                 /* Read a request */
                 if((ret = bdtun_read_request(bdtunch, &req)) != 0) {
-                        printf("Counld not get request from device.\n");
+                        printf("(3) Counld not get request from device: %d\n", ret);
                         return -1;
                 }
                 
                 /* Set position in backing file */
                 if(lseek(img, req.offset, SEEK_SET) != req.offset) {
-                        printf("Unable to set disk image position.\n");
+                        printf("(4) Unable to set disk image position.\n");
                         return 1;
                 }
 
                 /* Reqd / write backing file */
                 if (req.flags & REQ_WRITE) {
                         if((ret = write(img, req.buf, req.size)) != req.size) {
-                                printf("Unable to write disk image: %d\n", ret);
+                                printf("(5) Unable to write disk image: %d\n", ret);
                                 return 1;
                         }
                 } else {
                         if((ret = read(img, req.buf, req.size)) != req.size) {
-                                printf("Unable to read from disk image: %d\n", ret);
+                                printf("(6) Unable to read from disk image: %d\n", ret);
                                 return 1;
                         }
                 }
                 
                 /* Complete request */
                 if(bdtun_complete_request()) {
-                        printf("Unable to signal completion on write: %d\n", ret);
+                        printf("(7) Unable to signal completion on write: %d\n", ret);
                 }
         }
         

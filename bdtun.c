@@ -275,6 +275,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 /* Transfer bio data. */
                 bio_for_each_segment(bvec, entry->bio, i) {
                         void *kaddr = kmap(bvec->bv_page);
+                        // TODO: do direct IO here to speed things up
                         if(copy_to_user(buf+pos, kaddr+bvec->bv_offset, bvec->bv_len) != 0) {
                                 // TODO: error handling
                                 printk(KERN_WARNING "bdtun: error copying data to user\n");
@@ -286,19 +287,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         } else {
                 /* Transfer command header */
                 req = (struct bdtun_txreq *)buf;
-                req->flags = entry->bio->bi_rw;
-                /*if (bio_data_dir(entry->bio) == WRITE) {
-                        req->flags |= BDTUN_WRITE;
-                }
-                if (entry->bio->bi_rw & REQ_FLUSH) {
-                        req->flags |= BDTUN_FLUSH;
-                }
-                if (entry->bio->bi_rw & REQ_FUA) {
-                        req->flags |= BDTUN_FUA;
-                }
-                if (entry->bio->bi_rw & REQ_DISCARD) {
-                        req->flags |= BDTUN_DISCARD;
-                }*/
+                req->flags  = entry->bio->bi_rw;
                 req->offset = entry->bio->bi_sector * KERNEL_SECTOR_SIZE;
                 req->size   = entry->bio->bi_size;
                 
@@ -521,6 +510,7 @@ static int bdtun_create(char *name, int block_size, uint64_t size) {
         blk_queue_io_min(queue, block_size);
         blk_queue_make_request(queue, bdtun_make_request);
         blk_queue_flush(queue, REQ_FLUSH | REQ_FUA);
+        blk_queue_discard(queue);
         
         /*
          * Get registered.
