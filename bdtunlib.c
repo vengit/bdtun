@@ -10,13 +10,12 @@
  * Read a transfer request form a tunnel character device
  */
 int bdtun_read_request(int fd, struct bdtun_txreq *rq) {
-        ssize_t size, res;
+        ssize_t res;
         size_t count;
         size_t bufsize = 0;
         static char *buf = NULL;
         
-        size = sizeof(struct bdtun_txreq);
-        res = read(fd, rq, size);
+        res = read(fd, rq, BDTUN_TXREQ_HEADER_SIZE);
         if (res < 0) {
                 return res;
         }

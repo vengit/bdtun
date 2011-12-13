@@ -238,7 +238,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                         return -EIO;
                 }
         } else {
-                if (count != sizeof(struct bdtun_txreq)) {
+                if (count != BDTUN_TXREQ_HEADER_SIZE) {
                         spin_unlock_bh(&dev->bio_out_list_lock);
                         return -EIO;
                 }
@@ -332,7 +332,7 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         /* Validate write request size */
         if ((bio_data_dir(entry->bio) == READ && count != entry->bio->bi_size) ||
             (bio_data_dir(entry->bio) == WRITE && count != 1)) {
-                /* This is bad, because there is no way to recocer
+                /* This is bad, because there is no way to recover
                  * from this condition at this point. Maybe a re-queue
                  * into the out list would help. */
                 spin_lock_bh(&dev->bio_out_list_lock);

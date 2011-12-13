@@ -22,6 +22,8 @@ struct bdtun_txreq {
 	char *buf;
 };
 
+#define BDTUN_TXREQ_HEADER_SIZE sizeof(struct bdtun_txreq)-sizeof(char *)
+
 /*
  * Information on a device pair
  */
