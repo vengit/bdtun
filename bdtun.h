@@ -1,5 +1,9 @@
 #include <linux/blk_types.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #undef PDEBUG
 #ifdef BDTUN_DEBUG
 #  ifdef __KERNEL__
@@ -62,3 +66,7 @@ int bdtun_remove(int fd, char *name);
 int bdtun_info(int fd, char *name, struct bdtun_info *info);
 
 char **bdtun_list(int fd, size_t offset, size_t maxdevices);
+
+#ifdef __cplusplus
+}
+#endif

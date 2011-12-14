@@ -10,22 +10,35 @@ endif
 obj-m := bdtun.o
 KDIR := /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
-MYCFLAGS := -O2 -Wall
+MYCFLAGS := -O2 -Wall -L.
 
-all: module bdtunlib.o testclient bdtun
+all: module libbdtun.so testclient bdtun
+
+install: module libbdtun.so bdtun
+	$(MAKE) -C $(KDIR) M=$(PWD) modules_install
+	mkdir -p /usr/local/lib
+	mkdir -p /usr/local/bin
+	cp libbdtun.so /usr/local/lib/libbdtun.so
+	cp bdtun /usr/local/bin/bdtun
+	ldconfig
+
+uninstall:
+	rm -f /usr/local/lib/libbdtun.so
+	rm -f /usr/local/bin/bdtun
+	ldconfig
 
 module:
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
 
-testclient: bdtunlib.o testclient.c bdtun.h
-	gcc $(MYCFLAGS) $(EXTRA_CFLAGS) -o testclient bdtunlib.o testclient.c
+testclient: libbdtun.so testclient.c bdtun.h
+	gcc $(MYCFLAGS) $(EXTRA_CFLAGS) -o testclient -lbdtun testclient.c
 
-bdtun: bdtunlib.o bdtun_cli.c bdtun.h
-	gcc $(MYCFLAGS) $(EXTRA_CFLAGS) -o bdtun bdtunlib.o bdtun_cli.c
+bdtun: libbdtun.so bdtun_cli.c bdtun.h
+	gcc $(MYCFLAGS) $(EXTRA_CFLAGS) -o bdtun -lbdtun bdtun_cli.c
 
-bdtunlib.o: bdtunlib.c bdtun.h
-	gcc $(MYCFLAGS) $(EXTRA_CFLAGS) -c -o bdtunlib.o bdtunlib.c
+libbdtun.so: libbdtun.c bdtun.h
+	gcc $(MYCFLAGS) $(EXTRA_CFLAGS) -shared -c -o libbdtun.so libbdtun.c
 
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
-	rm -f testclient bdtunlib.o
+	rm -f testclient bdtun libbdtun.so

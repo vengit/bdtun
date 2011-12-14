@@ -1,6 +1,7 @@
 *.o
 *.ko
 *.cmd
+*.so
 Module.symvers
 modules.order
 .tmp_versions
@@ -8,3 +9,4 @@ modules.order
 *.gch
 *.disk
 testclient
+bdtun
