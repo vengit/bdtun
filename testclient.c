@@ -84,7 +84,7 @@ int main(int argc, char *argv[]) {
                 
                 /* Complete request */
                 printf("Completing request\n");
-                if(bdtun_complete_request()) {
+                if(bdtun_complete_request(bdtunch, &req)) {
                         printf("(7) Unable to signal completion on write: %d\n", ret);
                 }
         }

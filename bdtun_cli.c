@@ -14,4 +14,5 @@ void usage() {
 
 int main(int c, char **args) {
     // TODO: grab some nice argument parser lib
+    return 0;
 }

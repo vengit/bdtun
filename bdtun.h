@@ -37,3 +37,17 @@ struct bdtun_info {
 	int ch_major;
 	int ch_minor;
 };
+
+int bdtun_read_request(int fd, struct bdtun_txreq *rq);
+
+int bdtun_complete_request(int fd, struct bdtun_txreq *req);
+
+int bdtun_create(int fd, char *name, uint64_t size);
+
+int bdtun_resize(int fd, char *name, uint64_t size);
+
+int bdtun_remove(int fd, char *name);
+
+int bdtun_info(int fd, char *name, struct bdtun_info *info);
+
+char **bdtun_list(int fd, size_t offset, size_t maxdevices);

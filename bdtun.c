@@ -457,7 +457,7 @@ static struct bdtun *bdtun_find_device(char *name) {
 /*
  *  Commands to manage devices
  */
-static int bdtun_create(char *name, int block_size, uint64_t size) {
+static int bdtun_create_k(char *name, int block_size, uint64_t size) {
         struct bdtun *new;
         struct request_queue *queue;
         int error;
@@ -631,7 +631,7 @@ static int bdtun_create(char *name, int block_size, uint64_t size) {
         
 }
 
-static int bdtun_remove(char *name) {
+static int bdtun_remove_k(char *name) {
         struct bdtun *dev;
         
         dev = bdtun_find_device(name);
@@ -665,14 +665,14 @@ static int bdtun_remove(char *name) {
         return 0;
 }
 
-static int bdtun_info(char *name, struct bdtun_info *device_info) {
+static int bdtun_info_k(char *name, struct bdtun_info *device_info) {
         struct bdtun *dev = bdtun_find_device(name);
         device_info->bd_name = name;
         device_info->bd_size = dev->bd_size;
         return 0;
 }
 
-static void bdtun_list(char **ptrs, size_t offset, size_t maxdevices) {
+static void bdtun_list_k(char **ptrs, size_t offset, size_t maxdevices) {
         struct list_head *ptr;
         struct bdtun *entry;
         int i;
@@ -736,7 +736,7 @@ static int __init bdtun_init(void) {
                 goto out_destroy_class;
         }
 
-        bdtun_create("bdtuna", 4096, 102400000);
+        bdtun_create_k("bdtuna", 4096, 102400000);
         return 0;
 
         out_destroy_class:
@@ -755,7 +755,7 @@ static void __exit bdtun_exit(void) {
         flush_workqueue(add_disk_q);
         destroy_workqueue(add_disk_q);
         
-        bdtun_remove("bdtuna");
+        bdtun_remove_k("bdtuna");
         class_destroy(chclass);
 }
 
