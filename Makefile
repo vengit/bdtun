@@ -2,18 +2,18 @@ obj-m := bdtun.o
 KDIR := /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
 
-all: module lib testclient
+all: module bdtunlib.o testclient cli
 
-module:
+module: bdtun.c bdtun.h
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
 
-testclient: lib testclient.c
+testclient: bdtunlib.o testclient.c bdtun.h
 	gcc -o testclient bdtunlib.o testclient.c
 
-cli: lib bdtun_cli.c
+cli: bdtunlib.o bdtun_cli.c bdtun.h
 	gcc -o bdtun bdtunlib.o bdtun_cli.c
 
-lib: bdtunlib.c
+bdtunlib.o: bdtunlib.c bdtun.h
 	gcc -c -o bdtunlib.o bdtunlib.c
 
 clean:

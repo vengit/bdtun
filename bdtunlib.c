@@ -3,6 +3,7 @@
 #include <error.h>
 #include <inttypes.h>
 #include <errno.h>
+#include <stdio.h>
 
 #include "bdtun.h"
 
@@ -31,7 +32,8 @@ int bdtun_read_request(int fd, struct bdtun_txreq *rq) {
         
         rq->buf = buf;
         
-        if (!rq->flags & REQ_WRITE) {
+        if (rq->flags & REQ_WRITE) {
+                printf("Write request, getting data from kernel\n");
                 res = read(fd, rq->buf, rq->size);
                 if (res < 0) {
                         return res;
@@ -51,9 +53,11 @@ int bdtun_complete_request(int fd, struct bdtun_txreq *req) {
         ssize_t res, size;
         
         if (req->flags & REQ_WRITE) {
-                res = write(fd, req->buf, req->size);
-        } else {
+                printf("Completing write request by completion byte\n");
                 res = write(fd, "\0x06", 1);
+        } else {
+                printf("Completing read request by sending data\n");
+                res = write(fd, req->buf, req->size);
         }
         if (res < 0) {
                 return res;

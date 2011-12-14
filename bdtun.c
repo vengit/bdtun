@@ -137,6 +137,8 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
         
         struct bdtun_bio_list_entry *new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_ATOMIC);
         
+        printk(KERN_INFO "bdtun: make_request called\n");
+        
         if (!new) {
                 return -EIO;
         }
@@ -149,6 +151,7 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
         spin_unlock_bh(&dev->bio_out_list_lock);
         
         wake_up(&dev->bio_list_out_queue);
+        printk(KERN_INFO "bdtun: request queued\n");
         
         return 0;
 }
@@ -212,37 +215,51 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         
         out_list_is_empty:
         
+        printk(KERN_INFO "bdtun: Preparing to wait\n");
         prepare_to_wait(&dev->bio_list_out_queue, &wait, TASK_INTERRUPTIBLE);
         
+        printk(KERN_INFO "bdtun: grabbing spinlock on out queue\n");
         spin_lock_bh(&dev->bio_out_list_lock);
         
         if (list_empty(&dev->bio_out_list)) {
+                printk(KERN_INFO "bdtun: list empty, releasing spinlock for out queue\n");
                 spin_unlock_bh(&dev->bio_out_list_lock);
+                printk(KERN_INFO "bdtun: calling schedulle\n");
                 schedule();
+                printk(KERN_INFO "bdtun: awaken, finishing wait\n");
                 finish_wait(&dev->bio_list_out_queue, &wait);
                 
+                printk(KERN_INFO "bdtun: checking for pending signals\n");
                 if (signal_pending(current)) {
+                        printk(KERN_INFO "bdtun: signals are pending, returning -ERESTARTSYS\n");
                         return -ERESTARTSYS;
                 }
                 
+                printk(KERN_INFO "bdtun: no pending signals, checking out queue again\n");
                 goto out_list_is_empty;
         }
         
+        printk(KERN_INFO "bdtun: out list containts bio-s, finishing wait\n");
         finish_wait(&dev->bio_list_out_queue, &wait);
+        printk(KERN_INFO "bdtun: getting first entry\n");
         entry = list_entry(dev->bio_out_list.next, struct bdtun_bio_list_entry, list);
 
         /* Validate request here to avoid queue manipulation on error */
+        printk(KERN_INFO "bdtun: validating request size\n");
         if (entry->header_transferred) {
                 if (count != entry->bio->bi_size) {
+                        printk(KERN_INFO "bdtun: request size not equals bio size, returning -EIO\n");
                         spin_unlock_bh(&dev->bio_out_list_lock);
                         return -EIO;
                 }
         } else {
                 if (count != BDTUN_TXREQ_HEADER_SIZE) {
+                        printk(KERN_INFO "bdtun: request size not equals txreq header size (should be %lu), returning -EIO\n", BDTUN_TXREQ_HEADER_SIZE);
                         spin_unlock_bh(&dev->bio_out_list_lock);
                         return -EIO;
                 }
         }
+        printk(KERN_INFO "bdtun: request size is OK\n");
 
         /* Put bio into in list if needed */
         if (bio_data_dir(entry->bio) == READ || entry->header_transferred) {
@@ -265,6 +282,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 wake_up(&dev->bio_list_in_queue);
         }
 
+        printk(KERN_INFO "bdtun: releasing out queue spinlock\n");
         spin_unlock_bh(&dev->bio_out_list_lock);
         
         // TODO: need proper locking here. Use the semaphore.

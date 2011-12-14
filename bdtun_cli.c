@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <inttypes.h>
 
 #include "bdtun.h"
 
@@ -11,6 +12,6 @@ void usage() {
     printf("bdtun list\n");
 }
 
-int main(int char, char **args) {
+int main(int c, char **args) {
     // TODO: grab some nice argument parser lib
 }
