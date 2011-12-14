@@ -1,5 +1,16 @@
 #include <linux/blk_types.h>
 
+#undef PDEBUG
+#ifdef BDTUN_DEBUG
+#  ifdef __KERNEL__
+#    define PDEBUG(fmt, args...) printk(KERN_DEBUG "bdtun: " fmt, ## args)
+#  else
+#    define PDEBUG(fmt, args...) printf(fmt, ## args)
+#  endif
+#else
+#  define PDEBUG(fmt, args...)
+#endif
+
 /*
  * Device management commands
  */

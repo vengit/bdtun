@@ -137,7 +137,7 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
         
         struct bdtun_bio_list_entry *new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_ATOMIC);
         
-        printk(KERN_INFO "bdtun: make_request called\n");
+        PDEBUG("make_request called\n");
         
         if (!new) {
                 return -EIO;
@@ -151,7 +151,7 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
         spin_unlock_bh(&dev->bio_out_list_lock);
         
         wake_up(&dev->bio_list_out_queue);
-        printk(KERN_INFO "bdtun: request queued\n");
+        PDEBUG("request queued\n");
         
         return 0;
 }
@@ -190,12 +190,12 @@ static struct block_device_operations bdtun_ops = {
 static int bdtunch_open(struct inode *inode, struct file *filp) {
         struct bdtun *dev = container_of(inode->i_cdev, struct bdtun, ch_dev);
         filp->private_data = dev;
-        printk(KERN_DEBUG "bdtun: got device_open on char dev\n");
+        PDEBUG("got device_open on char dev\n");
         return 0;
 }
 
 static int bdtunch_release(struct inode *inode, struct file *filp) {
-        printk(KERN_DEBUG "bdtun: got device_release on char dev\n");
+        PDEBUG("got device_release on char dev\n");
         return 0;
 }
 
@@ -215,51 +215,51 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         
         out_list_is_empty:
         
-        printk(KERN_INFO "bdtun: Preparing to wait\n");
+        PDEBUG("Preparing to wait\n");
         prepare_to_wait(&dev->bio_list_out_queue, &wait, TASK_INTERRUPTIBLE);
         
-        printk(KERN_INFO "bdtun: grabbing spinlock on out queue\n");
+        PDEBUG("grabbing spinlock on out queue\n");
         spin_lock_bh(&dev->bio_out_list_lock);
         
         if (list_empty(&dev->bio_out_list)) {
-                printk(KERN_INFO "bdtun: list empty, releasing spinlock for out queue\n");
+                PDEBUG("list empty, releasing spinlock for out queue\n");
                 spin_unlock_bh(&dev->bio_out_list_lock);
-                printk(KERN_INFO "bdtun: calling schedulle\n");
+                PDEBUG("calling schedulle\n");
                 schedule();
-                printk(KERN_INFO "bdtun: awaken, finishing wait\n");
+                PDEBUG("awaken, finishing wait\n");
                 finish_wait(&dev->bio_list_out_queue, &wait);
                 
-                printk(KERN_INFO "bdtun: checking for pending signals\n");
+                PDEBUG("checking for pending signals\n");
                 if (signal_pending(current)) {
-                        printk(KERN_INFO "bdtun: signals are pending, returning -ERESTARTSYS\n");
+                        PDEBUG("signals are pending, returning -ERESTARTSYS\n");
                         return -ERESTARTSYS;
                 }
                 
-                printk(KERN_INFO "bdtun: no pending signals, checking out queue again\n");
+                PDEBUG("no pending signals, checking out queue again\n");
                 goto out_list_is_empty;
         }
         
-        printk(KERN_INFO "bdtun: out list containts bio-s, finishing wait\n");
+        PDEBUG("out list containts bio-s, finishing wait\n");
         finish_wait(&dev->bio_list_out_queue, &wait);
-        printk(KERN_INFO "bdtun: getting first entry\n");
+        PDEBUG("getting first entry\n");
         entry = list_entry(dev->bio_out_list.next, struct bdtun_bio_list_entry, list);
 
         /* Validate request here to avoid queue manipulation on error */
-        printk(KERN_INFO "bdtun: validating request size\n");
+        PDEBUG("validating request size\n");
         if (entry->header_transferred) {
                 if (count != entry->bio->bi_size) {
-                        printk(KERN_INFO "bdtun: request size not equals bio size, returning -EIO\n");
+                        PDEBUG("request size not equals bio size, returning -EIO\n");
                         spin_unlock_bh(&dev->bio_out_list_lock);
                         return -EIO;
                 }
         } else {
                 if (count != BDTUN_TXREQ_HEADER_SIZE) {
-                        printk(KERN_INFO "bdtun: request size not equals txreq header size (should be %lu), returning -EIO\n", BDTUN_TXREQ_HEADER_SIZE);
+                        PDEBUG("request size not equals txreq header size (should be %lu), returning -EIO\n", BDTUN_TXREQ_HEADER_SIZE);
                         spin_unlock_bh(&dev->bio_out_list_lock);
                         return -EIO;
                 }
         }
-        printk(KERN_INFO "bdtun: request size is OK\n");
+        PDEBUG("request size is OK\n");
 
         /* Put bio into in list if needed */
         if (bio_data_dir(entry->bio) == READ || entry->header_transferred) {
@@ -282,7 +282,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 wake_up(&dev->bio_list_in_queue);
         }
 
-        printk(KERN_INFO "bdtun: releasing out queue spinlock\n");
+        PDEBUG("releasing out queue spinlock\n");
         spin_unlock_bh(&dev->bio_out_list_lock);
         
         // TODO: need proper locking here. Use the semaphore.
@@ -296,7 +296,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                         // TODO: do direct IO here to speed things up
                         if(copy_to_user(buf+pos, kaddr+bvec->bv_offset, bvec->bv_len) != 0) {
                                 // TODO: error handling
-                                printk(KERN_WARNING "bdtun: error copying data to user\n");
+                                PDEBUG("error copying data to user\n");
                                 return -EFAULT;
                         }
                         kunmap(bvec->bv_page);
@@ -353,7 +353,7 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                 spin_lock_bh(&dev->bio_out_list_lock);
                 list_add(&entry->list, &dev->bio_out_list);
                 spin_unlock_bh(&dev->bio_out_list_lock);
-                printk(KERN_WARNING "bdtun: invalid request size from user returning -EIO and re-queueing bio.\n");
+                PDEBUG("invalid request size from user returning -EIO and re-queueing bio.\n");
                 // bio_endio(entry->bio, -EIO);
                 return -EIO;
         }
@@ -366,7 +366,7 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                         void *kaddr = kmap(bvec->bv_page);
                         if(copy_from_user(kaddr+bvec->bv_offset, buf+pos, bvec->bv_len) != 0) {
                                 // TODO: error handling
-                                printk(KERN_WARNING "bdtun: error copying data from user\n");
+                                PDEBUG("error copying data from user\n");
                                 kunmap(bvec->bv_page);
                                 bio_endio(entry->bio, -1);
                                 return -EFAULT;
@@ -401,13 +401,13 @@ static struct file_operations bdtunch_ops = {
  */
 static int ctrl_open(struct inode *inode, struct file *filp) {
         /* Allow only one open: grab lock, increase count */
-        printk(KERN_DEBUG "bdtun: got device_open on master dev\n");
+        PDEBUG("got device_open on master dev\n");
         return 0;
 }
 
 static int ctrl_release(struct inode *inode, struct file *filp) {
         /* Grab lock, decrement usage count */
-        printk(KERN_DEBUG "bdtun: got device_release on master dev\n");
+        PDEBUG("got device_release on master dev\n");
         return 0;
 }
 
@@ -533,7 +533,7 @@ static int bdtun_create_k(char *name, int block_size, uint64_t size) {
          */
         bd_major = register_blkdev(0, "bdtun");
         if (bd_major <= 0) {
-                printk(KERN_WARNING "bdtun: unable to get major number\n");
+                PDEBUG("unable to get major number\n");
                 goto vfree_adq_unreg;
         }
         
@@ -555,19 +555,19 @@ static int bdtun_create_k(char *name, int block_size, uint64_t size) {
         /*
          * Initialize character device
          */
-        printk(KERN_INFO "bdtun: setting up char device\n");
+        PDEBUG("setting up char device\n");
         if (alloc_chrdev_region(&ch_num, 0, 1, charname) != 0) {
-                printk(KERN_WARNING "bdtun: could not allocate character device number\n");
+                PDEBUG("could not allocate character device number\n");
                 goto vfree_adq_unreg;
         }
         new->ch_major = MAJOR(ch_num);
         // register character device
         cdev_init(&new->ch_dev, &bdtunch_ops);
         new->ch_dev.owner = THIS_MODULE;
-        printk(KERN_INFO "bdtun: char major %d\n", new->ch_major);
+        PDEBUG("char major %d\n", new->ch_major);
         error = cdev_add(&new->ch_dev, ch_num ,1);
         if (error) {
-                printk(KERN_NOTICE "bdtun: error setting up char device\n");
+                PDEBUG("error setting up char device\n");
                 goto vfree_adq_unreg;
         }
         
@@ -577,7 +577,7 @@ static int bdtun_create_k(char *name, int block_size, uint64_t size) {
         
         new->ch_device = device_create(chclass, NULL, MKDEV(new->ch_major, 0), NULL, charname);
         if (IS_ERR(new->ch_device)) {
-                printk(KERN_NOTICE "bdtun: error setting up device object\n");
+                PDEBUG("error setting up device object\n");
                 goto vfree_adq_unreg;
         }
         
@@ -586,7 +586,7 @@ static int bdtun_create_k(char *name, int block_size, uint64_t size) {
          */
         list_add_tail(&new->list, &device_list);
         
-        printk(KERN_NOTICE "bdtun: module init finished\n");
+        PDEBUG("module init finished\n");
         
         /*
          * Register the disk now.
@@ -637,22 +637,22 @@ static int bdtun_remove_k(char *name) {
         dev = bdtun_find_device(name);
         
         if (dev == NULL) {
-                printk(KERN_NOTICE "bdtun: error removing '%s': no such device\n", name);
+                PDEBUG("error removing '%s': no such device\n", name);
                 return -ENOENT;
         }
         
         /* Destroy block devices */
-        printk(KERN_DEBUG "bdtun: removing block device\n");
+        PDEBUG("removing block device\n");
         unregister_blkdev(dev->bd_gd->major, "bdtun");
         blk_cleanup_queue(dev->bd_gd->queue);
         del_gendisk(dev->bd_gd);
         put_disk(dev->bd_gd);
         
         /* Destroy character devices */
-        printk(KERN_DEBUG "bdtun: removing char device\n");
+        PDEBUG("removing char device\n");
         unregister_chrdev_region(dev->ch_major, 1);
         cdev_del(&dev->ch_dev);
-        printk(KERN_NOTICE "bdtun: device shutdown finished\n");
+        PDEBUG("device shutdown finished\n");
         
         /* Unreg device object and class if needed TODO: only if needed */
         device_destroy(chclass, MKDEV(dev->ch_major, 0));
@@ -660,7 +660,7 @@ static int bdtun_remove_k(char *name) {
         /* Unlink and free device structure */
         list_del(&dev->list);
         vfree(dev);
-        printk(KERN_NOTICE "bdtun: device removed from list\n");
+        PDEBUG("device removed from list\n");
         
         return 0;
 }
@@ -702,7 +702,7 @@ static int __init bdtun_init(void) {
         
         chclass = class_create(THIS_MODULE, "bdtun");
         if (IS_ERR(chclass)) {
-                printk(KERN_NOTICE "bdtun: error setting up device class\n");
+                PDEBUG("error setting up device class\n");
                 // TODO: corretct error values throughout the code
                 goto out_err;
         }
@@ -710,11 +710,11 @@ static int __init bdtun_init(void) {
         /*
          * Initialize master character device
          */
-        printk(KERN_INFO "bdtun: setting up char device\n");
+        PDEBUG("setting up char device\n");
         // TODO: seriously, shouldn't we deallocate this???
         if (alloc_chrdev_region(&ch_num, 0, 1, "bdtun") != 0) {
                 // TODO: correct printk message levels throughout the code
-                printk(KERN_WARNING "bdtun: could not allocate control device number\n");
+                PDEBUG("could not allocate control device number\n");
                 goto out_destroy_class;
         }
         ctrl_major = MAJOR(ch_num);
@@ -722,7 +722,7 @@ static int __init bdtun_init(void) {
         ctrl_dev.owner = THIS_MODULE;
         error = cdev_add(&ctrl_dev, ch_num ,1);
         if (error) {
-                printk(KERN_NOTICE "bdtun: error setting up control device\n");
+                PDEBUG("error setting up control device\n");
                 goto out_destroy_class;
         }
         
@@ -732,7 +732,7 @@ static int __init bdtun_init(void) {
         
         ctrl_device = device_create(chclass, NULL, MKDEV(ctrl_major, 0), NULL, "bdtun");
         if (IS_ERR(ctrl_device)) {
-                printk(KERN_NOTICE "bdtun: error setting up control device object\n");
+                PDEBUG("error setting up control device object\n");
                 goto out_destroy_class;
         }
 
