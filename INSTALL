@@ -1,0 +1,24 @@
+Installing bdtun
+
+To install bdtun do the following:
+
+cd bdtun # make bdtun directory current
+make
+make install
+
+To install with debugging enabled:
+
+cd bdtun
+make DEBUG=y
+make install
+
+The install script installs the following items:
+
+bdtun kernel module (use "modprobe bdtun" to load it)
+/usr/local/lib/libbdtun.so, shared library
+/usr/local/bin/bdtun, command line interface
+
+During make, a test client binary "testclient" is built,
+but it is not installed anywhere. You can find it in
+the bdtun directory.
+

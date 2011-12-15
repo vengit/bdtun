@@ -9,6 +9,4 @@
   * open(returns file handler)
 * Add block device request tunneling (structs, .h, lib)
   * THREAD SAFETY!!!
-  * read
-  * write
 * Create python binding for quick prototyping
