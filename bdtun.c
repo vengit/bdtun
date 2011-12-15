@@ -64,7 +64,7 @@ struct bdtun {
         
         /* character device related */
         struct cdev ch_dev;
-        int ch_major;
+        int ch_num;
         struct device *ch_device;
         
         struct list_head bio_out_list;
@@ -462,13 +462,13 @@ static int bdtun_create_k(char *name, int block_size, uint64_t size) {
         struct request_queue *queue;
         int error;
         int bd_major;
-        int ch_num;
         char charname[37];
         char qname[35];
         
         /*
          * Set up character device and workqueue name
          */
+        // TODO: this feels ugly. maybe a nicer way to do this?
         strncpy(charname, name, 32);
         strcat(charname, "_tun");
         strncpy(qname, name, 32);
@@ -480,17 +480,18 @@ static int bdtun_create_k(char *name, int block_size, uint64_t size) {
         new = vmalloc(sizeof (struct bdtun));
         if (new == NULL) {
                 return -ENOMEM;
+                // TODO: use the correct return values
         }
         
         /*
          * Determine device size
          */
         new->bd_block_size = block_size;
-        new->bd_nsectors   = size / block_size; // Size is just an approximate.
+        new->bd_nsectors   = size / block_size; // Incoming size is just an approximate.
         new->bd_size       = new->bd_nsectors * block_size;
         
         /*
-         * Semaphores stuff like that 
+         * Semaphores and stuff like that 
          */
         spin_lock_init(&new->bio_in_list_lock);
         spin_lock_init(&new->bio_out_list_lock);
@@ -509,7 +510,7 @@ static int bdtun_create_k(char *name, int block_size, uint64_t size) {
         
         add_disk_q = alloc_workqueue("bdtun_add_disk", 0, 0);
         if (!add_disk_q) {
-                goto vfree;
+                goto out_vfree;
         }
         
         /*
@@ -518,9 +519,10 @@ static int bdtun_create_k(char *name, int block_size, uint64_t size) {
         queue = blk_alloc_queue(GFP_KERNEL);
 
         if (queue == NULL) {
-                goto vfree_adq;
+                goto out_adq;
         }
         
+        // TODO: get bd features from command line parameters
         queue->queuedata = new;
         blk_queue_logical_block_size(queue, block_size);
         blk_queue_io_min(queue, block_size);
@@ -534,7 +536,7 @@ static int bdtun_create_k(char *name, int block_size, uint64_t size) {
         bd_major = register_blkdev(0, "bdtun");
         if (bd_major <= 0) {
                 PDEBUG("unable to get major number\n");
-                goto vfree_adq_unreg;
+                goto out_cleanup_queue;
         }
         
         /*
@@ -542,7 +544,7 @@ static int bdtun_create_k(char *name, int block_size, uint64_t size) {
          */
         new->bd_gd = alloc_disk(16);
         if (!new->bd_gd) {
-                goto vfree_adq_unreg;
+                goto out_unregister_blkdev;
         }
         new->bd_gd->major = bd_major;
         new->bd_gd->first_minor = 0;
@@ -556,29 +558,29 @@ static int bdtun_create_k(char *name, int block_size, uint64_t size) {
          * Initialize character device
          */
         PDEBUG("setting up char device\n");
-        if (alloc_chrdev_region(&ch_num, 0, 1, charname) != 0) {
+        if (alloc_chrdev_region(&new->ch_num, 0, 1, charname) != 0) {
                 PDEBUG("could not allocate character device number\n");
-                goto vfree_adq_unreg;
+                goto out_del_disk;
         }
-        new->ch_major = MAJOR(ch_num);
         // register character device
         cdev_init(&new->ch_dev, &bdtunch_ops);
         new->ch_dev.owner = THIS_MODULE;
-        PDEBUG("char major %d\n", new->ch_major);
-        error = cdev_add(&new->ch_dev, ch_num ,1);
+        
+        PDEBUG("char major %d\n", MAJOR(new->ch_num));
+        error = cdev_add(&new->ch_dev, new->ch_num ,1);
         if (error) {
                 PDEBUG("error setting up char device\n");
-                goto vfree_adq_unreg;
+                goto out_unregister_chrdev_region;
         }
         
         /*
          * Add a device node
          */
         
-        new->ch_device = device_create(chclass, NULL, MKDEV(new->ch_major, 0), NULL, charname);
+        new->ch_device = device_create(chclass, NULL, new->ch_num, NULL, charname);
         if (IS_ERR(new->ch_device)) {
                 PDEBUG("error setting up device object\n");
-                goto vfree_adq_unreg;
+                goto out_cdev_del;
         }
         
         /*
@@ -589,26 +591,7 @@ static int bdtun_create_k(char *name, int block_size, uint64_t size) {
         PDEBUG("module init finished\n");
         
         /*
-         * Register the disk now.
-         * 
-         * This needs to be done at the end, so the char device will be
-         * up, and we will be able to serve io requests.
-         * 
-         * It would also be a great idea to postpone this step until
-         * the open() on the char device, so insmod won't hang and
-         * run onto a timeout eventually.
-         * 
-         * NOTE: add_disk() does not return until the kernel finished
-         * reading the partition table. add_disk() should be postponed
-         * until the first read() on the tunnel char dev.
-         * 
-         * Even then it should be fired off in a tasklet, so the call
-         * can go on and wait on the bio to-do list.
-         * 
-         * Hmm... a tasklet could be created right now.
-         * 
-         * Ok, I fed up with kernel panics and deadlocks, I'll go
-         * and play HAM radio. That's it.
+         * Register the disk in a tasklet.
          */
         INIT_WORK(&add_disk_work.work, bdtun_do_add_disk);
         add_disk_work.gd = new->bd_gd;
@@ -616,19 +599,22 @@ static int bdtun_create_k(char *name, int block_size, uint64_t size) {
 
         return 0;
         
-        /*
-         * "catch exceptions"
-         */
-        // TODO: there's soo many stuff missing here.
-        vfree_adq_unreg:
+        out_cdev_del:
+                cdev_del(&new->ch_dev);
+        out_unregister_chrdev_region:
+                unregister_chrdev_region(new->ch_num, 1);
+        out_del_disk:
+                del_gendisk(new->bd_gd);
+                put_disk(new->bd_gd);
+        out_unregister_blkdev:
                 unregister_blkdev(bd_major, "bdtun");
-        vfree_adq:
+        out_cleanup_queue:
+                blk_cleanup_queue(queue);
+        out_adq:
                 destroy_workqueue(add_disk_q);
-        vfree:
+        out_vfree:
                 vfree(new);
                 return -ENOMEM;
-
-        
 }
 
 static int bdtun_remove_k(char *name) {
@@ -650,12 +636,12 @@ static int bdtun_remove_k(char *name) {
         
         /* Destroy character devices */
         PDEBUG("removing char device\n");
-        unregister_chrdev_region(dev->ch_major, 1);
+        unregister_chrdev_region(dev->ch_num, 1);
         cdev_del(&dev->ch_dev);
         PDEBUG("device shutdown finished\n");
         
-        /* Unreg device object and class if needed TODO: only if needed */
-        device_destroy(chclass, MKDEV(dev->ch_major, 0));
+        /* Unreg device object and class if needed */
+        device_destroy(chclass, dev->ch_num);
         
         /* Unlink and free device structure */
         list_del(&dev->list);
