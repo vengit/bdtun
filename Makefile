@@ -1,6 +1,3 @@
-# Comment/uncomment the following line to disable/enable debuging
-#DEBUG = y
-
 ifeq ($(DEBUG),y)
   EXTRA_CFLAGS = -O -g -DBDTUN_DEBUG
 else
