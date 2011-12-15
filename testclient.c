@@ -21,11 +21,9 @@ void usage() {
 }
 
 int main(int argc, char *argv[]) {
-        char ans = BDTUN_RQ_COMPLETE;
         struct bdtun_txreq req;
         char *filename;
         int bdtunch;
-        char *buf;
         int img;
         int ret;
         

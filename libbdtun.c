@@ -12,7 +12,6 @@
  */
 int bdtun_read_request(int fd, struct bdtun_txreq *rq) {
         ssize_t res;
-        size_t count;
         size_t bufsize = 0;
         static char *buf = NULL;
         
@@ -50,7 +49,7 @@ int bdtun_read_request(int fd, struct bdtun_txreq *rq) {
  * data read by the user process.
  */
 int bdtun_complete_request(int fd, struct bdtun_txreq *req) {
-        ssize_t res, size;
+        int res;
         
         if (req->flags & REQ_WRITE) {
                 printf("Completing write request by completion byte\n");

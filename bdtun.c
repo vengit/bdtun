@@ -53,7 +53,7 @@ struct bdtun_bio_list_entry {
  */
 static struct class *chclass;
 static struct device *ctrl_device;
-static int ctrl_major;
+static int ctrl_devnum;
 
 /*
  * BDTun device structure
@@ -697,7 +697,6 @@ static void bdtun_list_k(char **ptrs, size_t offset, size_t maxdevices) {
  * Initialize module
  */
 static int __init bdtun_init(void) {
-        int ch_num;
         int error;
         
         chclass = class_create(THIS_MODULE, "bdtun");
@@ -711,34 +710,36 @@ static int __init bdtun_init(void) {
          * Initialize master character device
          */
         PDEBUG("setting up char device\n");
-        // TODO: seriously, shouldn't we deallocate this???
-        if (alloc_chrdev_region(&ch_num, 0, 1, "bdtun") != 0) {
-                // TODO: correct printk message levels throughout the code
-                PDEBUG("could not allocate control device number\n");
+
+        if (alloc_chrdev_region(&ctrl_devnum, 0, 1, "bdtun") != 0) {
+                printk(KERN_ERR "could not allocate control device number\n");
                 goto out_destroy_class;
         }
-        ctrl_major = MAJOR(ch_num);
         cdev_init(&ctrl_dev, &ctrl_ops);
         ctrl_dev.owner = THIS_MODULE;
-        error = cdev_add(&ctrl_dev, ch_num ,1);
+        error = cdev_add(&ctrl_dev, ctrl_devnum ,1);
         if (error) {
                 PDEBUG("error setting up control device\n");
-                goto out_destroy_class;
+                goto out_unregister_chrdev_region;
         }
         
         /*
          * Add a device node
          */
         
-        ctrl_device = device_create(chclass, NULL, MKDEV(ctrl_major, 0), NULL, "bdtun");
+        ctrl_device = device_create(chclass, NULL, ctrl_devnum, NULL, "bdtun");
         if (IS_ERR(ctrl_device)) {
                 PDEBUG("error setting up control device object\n");
-                goto out_destroy_class;
+                goto out_cdev_del;
         }
 
         bdtun_create_k("bdtuna", 4096, 102400000);
         return 0;
 
+        out_cdev_del:
+                cdev_del(&ctrl_dev);
+        out_unregister_chrdev_region:
+                unregister_chrdev_region(ctrl_devnum, 1);
         out_destroy_class:
                 class_destroy(chclass);
         out_err:
@@ -749,13 +750,14 @@ static int __init bdtun_init(void) {
  * Clean up on module remove
  */
 static void __exit bdtun_exit(void) {
-        /*
-         * Destroy work queue
-         */
         flush_workqueue(add_disk_q);
         destroy_workqueue(add_disk_q);
-        
+        // TODO: by control device
+        // TODO: destroy every device (is it really needed?)
         bdtun_remove_k("bdtuna");
+        device_destroy(chclass, ctrl_devnum);
+        cdev_del(&ctrl_dev);
+        unregister_chrdev_region(ctrl_devnum, 1);
         class_destroy(chclass);
 }
 
