@@ -508,18 +508,13 @@ static int bdtun_create_k(char *name, int block_size, uint64_t size) {
         INIT_LIST_HEAD(&new->bio_in_list);
         INIT_LIST_HEAD(&new->bio_out_list);
         
-        add_disk_q = alloc_workqueue("bdtun_add_disk", 0, 0);
-        if (!add_disk_q) {
-                goto out_vfree;
-        }
-        
         /*
          * Get a request queue.
          */
         queue = blk_alloc_queue(GFP_KERNEL);
 
         if (queue == NULL) {
-                goto out_adq;
+                goto out_vfree;
         }
         
         // TODO: get bd features from command line parameters
@@ -562,7 +557,10 @@ static int bdtun_create_k(char *name, int block_size, uint64_t size) {
                 PDEBUG("could not allocate character device number\n");
                 goto out_del_disk;
         }
-        // register character device
+        
+        /*
+         * Register character device
+         */
         cdev_init(&new->ch_dev, &bdtunch_ops);
         new->ch_dev.owner = THIS_MODULE;
         
@@ -610,8 +608,6 @@ static int bdtun_create_k(char *name, int block_size, uint64_t size) {
                 unregister_blkdev(bd_major, "bdtun");
         out_cleanup_queue:
                 blk_cleanup_queue(queue);
-        out_adq:
-                destroy_workqueue(add_disk_q);
         out_vfree:
                 vfree(new);
                 return -ENOMEM;
@@ -685,11 +681,22 @@ static void bdtun_list_k(char **ptrs, size_t offset, size_t maxdevices) {
 static int __init bdtun_init(void) {
         int error;
         
+        /*
+         * Set up a work queue for adding disks
+         */
+        add_disk_q = alloc_workqueue("bdtun_add_disk", 0, 0);
+        if (!add_disk_q) {
+                goto out_err;
+        }
+                
+        /*
+         * Set up a device class 
+         */
         chclass = class_create(THIS_MODULE, "bdtun");
         if (IS_ERR(chclass)) {
                 PDEBUG("error setting up device class\n");
                 // TODO: corretct error values throughout the code
-                goto out_err;
+                goto out_adq;
         }
 
         /*
@@ -728,6 +735,8 @@ static int __init bdtun_init(void) {
                 unregister_chrdev_region(ctrl_devnum, 1);
         out_destroy_class:
                 class_destroy(chclass);
+        out_adq:
+                destroy_workqueue(add_disk_q);
         out_err:
                 return -ENOMEM;
 }
