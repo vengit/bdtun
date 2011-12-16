@@ -18,6 +18,7 @@ install: module libbdtun.so bdtun
 	cp libbdtun.so /usr/local/lib/libbdtun.so
 	cp bdtun /usr/local/bin/bdtun
 	ldconfig
+	depmod
 
 uninstall:
 	rm -f /usr/local/lib/libbdtun.so

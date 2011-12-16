@@ -397,51 +397,10 @@ static struct file_operations bdtunch_ops = {
 };
 
 /*
- * Control device functions
- */
-static int ctrl_open(struct inode *inode, struct file *filp) {
-        /* Allow only one open: grab lock, increase count */
-        PDEBUG("got device_open on master dev\n");
-        return 0;
-}
-
-static int ctrl_release(struct inode *inode, struct file *filp) {
-        /* Grab lock, decrement usage count */
-        PDEBUG("got device_release on master dev\n");
-        return 0;
-}
-
-static ssize_t ctrl_read(struct file *filp, char *buf, size_t count, loff_t *f_pos) {
-        return 0;
-}
-
-static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff_t *offset) {
-        // TODO: implement a request-response type of protocol
-        /* Read a request */
-        /* Do stuff, maybe fail doing it */
-        /* Put a response in place */
-        
-        // TODO: this doesn't need to be a list, only one element is
-        // Required.
-        
-        return 0;
-}
-
-/*
- * Operations on control device
- */
-static struct file_operations ctrl_ops = {
-        .read    = ctrl_read,
-        .write   = ctrl_write,
-        .open    = ctrl_open,
-        .release = ctrl_release
-};
-
-/*
  * Device list management auxilliary functions
  */
 
-static struct bdtun *bdtun_find_device(char *name) {
+static struct bdtun *bdtun_find_device(const char *name) {
         struct list_head *ptr;
         struct bdtun *entry;
         
@@ -457,7 +416,7 @@ static struct bdtun *bdtun_find_device(char *name) {
 /*
  *  Commands to manage devices
  */
-static int bdtun_create_k(char *name, int block_size, uint64_t size) {
+static int bdtun_create_k(const char *name, int block_size, uint64_t size) {
         struct bdtun *new;
         struct request_queue *queue;
         int error;
@@ -613,7 +572,7 @@ static int bdtun_create_k(char *name, int block_size, uint64_t size) {
                 return -ENOMEM;
 }
 
-static int bdtun_remove_k(char *name) {
+static int bdtun_remove_k(const char *name) {
         struct bdtun *dev;
         
         dev = bdtun_find_device(name);
@@ -676,6 +635,88 @@ static void bdtun_list_k(char **ptrs, size_t offset, size_t maxdevices) {
 }
 
 /*
+ * Control device functions
+ */
+static int ctrl_open(struct inode *inode, struct file *filp) {
+        /* Allow only one open: grab lock, increase count */
+        PDEBUG("got device_open on master dev\n");
+        return 0;
+}
+
+static int ctrl_release(struct inode *inode, struct file *filp) {
+        /* Grab lock, decrement usage count */
+        PDEBUG("got device_release on master dev\n");
+        return 0;
+}
+
+static char ctrl_response_buf[1024];
+static int ctrl_response_size = 0;
+
+/*
+ * Copies last response to user. A 0 sized answer means no answer.
+ */
+static ssize_t ctrl_read(struct file *filp, char *buf, size_t count, loff_t *f_pos) {
+        int tmp = ctrl_response_size;
+        
+        if (ctrl_response_size < 0) {
+                return -EIO;
+        }
+        
+        if(copy_to_user(buf, ctrl_response_buf, ctrl_response_size) != 0) {
+                PDEBUG("error copying data to user in ctrl_read\n");
+                return -EFAULT;
+        }
+        
+        ctrl_response_size = 0;
+        
+        return tmp;
+}
+
+static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff_t *offset) {
+        
+        if (count < 1) {
+                return -EIO;
+        }
+        
+        /* We'll be doing this all the time. Maybe a better framework? */
+        switch (buf[0]) {
+                case BDTUN_COMM_CREATE:
+                        /* Params: block size, size in bytes, 0 terminated device name */
+                        if (count <= 2 * sizeof(unsigned long)) {
+                                return -EIO;
+                        }
+                        // TODO: ugly as fuck.
+                        return bdtun_create_k(buf + 9 + sizeof(unsigned long), *(uint64_t *)(buf + 1), *(uint64_t *)(buf + 1 + sizeof(unsigned long)));
+                case BDTUN_COMM_REMOVE:
+                        /* Params: 0 terminated device name */
+                        // TODO: is it really safe to suck up strings like this from userspace?
+                        return bdtun_remove_k(buf);
+                case BDTUN_COMM_LIST:
+                        /* Params: offset, count */
+                case BDTUN_COMM_INFO:
+                        /* Params: device index */
+                case BDTUN_COMM_RESIZE:
+                        /* Params: device index, blocksize, size in bytes */
+                        // TODO: how to communicate this with the client?
+                default:
+                        return -EIO;
+                        break;
+        }
+        
+        return count;
+}
+
+/*
+ * Operations on control device
+ */
+static struct file_operations ctrl_ops = {
+        .read    = ctrl_read,
+        .write   = ctrl_write,
+        .open    = ctrl_open,
+        .release = ctrl_release
+};
+
+/*
  * Initialize module
  */
 static int __init bdtun_init(void) {
@@ -726,7 +767,6 @@ static int __init bdtun_init(void) {
                 goto out_cdev_del;
         }
 
-        bdtun_create_k("bdtuna", 4096, 102400000);
         return 0;
 
         out_cdev_del:
@@ -747,9 +787,6 @@ static int __init bdtun_init(void) {
 static void __exit bdtun_exit(void) {
         flush_workqueue(add_disk_q);
         destroy_workqueue(add_disk_q);
-        // TODO: by control device
-        // TODO: destroy every device (is it really needed?)
-        bdtun_remove_k("bdtuna");
         device_destroy(chclass, ctrl_devnum);
         cdev_del(&ctrl_dev);
         unregister_chrdev_region(ctrl_devnum, 1);

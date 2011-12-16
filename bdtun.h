@@ -57,9 +57,9 @@ int bdtun_read_request(int fd, struct bdtun_txreq *rq);
 
 int bdtun_complete_request(int fd, struct bdtun_txreq *req);
 
-int bdtun_create(int fd, char *name, uint64_t size);
+int bdtun_create(int fd, char *name, uint64_t blocksize, uint64_t size);
 
-int bdtun_resize(int fd, char *name, uint64_t size);
+int bdtun_resize(int fd, char *name, uint64_t blocksize, uint64_t size);
 
 int bdtun_remove(int fd, char *name);
 

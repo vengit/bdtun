@@ -4,6 +4,7 @@
 #include <inttypes.h>
 #include <errno.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "bdtun.h"
 
@@ -68,14 +69,30 @@ int bdtun_complete_request(int fd, struct bdtun_txreq *req) {
 /*
  * Create a device pair with the given size and name
  */
-int bdtun_create(int fd, char *name, uint64_t size) {
+int bdtun_create(int fd, char *name, uint64_t blocksize, uint64_t size) {
+        int len = strlen(name)+1;
+        char buf[1024];
+        int ret;
+        
+        // TODO: name limit!!!!!
+        // TODO: we sooo need macros / structs for writing / reading these
+        memcpy(buf, name, len);
+        memcpy(buf + len, &blocksize, 8);
+        memcpy(buf + len + 8, &blocksize, 8);
+        
+        ret = write(fd, buf, len + 16);
+        
+        if (ret < 0) {
+                return ret;
+        }
+        
         return 0;
 }
 
 /*
  * Resize an existing block device
  */
-int bdtun_resize(int fd, char *name, uint64_t size) {
+int bdtun_resize(int fd, char *name, uint64_t blocksize, uint64_t size) {
         return 0;
 }
 
@@ -83,6 +100,10 @@ int bdtun_resize(int fd, char *name, uint64_t size) {
  * Remove a device pair
  */
 int bdtun_remove(int fd, char *name) {
+        int ret = write(fd, name, strlen(name) + 1);
+        if (ret < 0) {
+                return ret;
+        }
         return 0;
 }
 
