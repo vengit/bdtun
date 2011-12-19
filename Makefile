@@ -7,7 +7,9 @@ endif
 obj-m := bdtun.o
 KDIR := /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
-MYCFLAGS := -O2 -Wall -L.
+MYCFLAGS := -Wall -L.
+
+MYCFLAGS += $(EXTRA_CFLAGS)
 
 all: module libbdtun.so testclient bdtun
 
@@ -29,13 +31,13 @@ module:
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
 
 testclient: libbdtun.so testclient.c bdtun.h
-	gcc $(MYCFLAGS) $(EXTRA_CFLAGS) -o testclient -lbdtun testclient.c
+	gcc $(MYCFLAGS) -o testclient -lbdtun testclient.c
 
 bdtun: libbdtun.so bdtun_cli.c bdtun.h
-	gcc $(MYCFLAGS) $(EXTRA_CFLAGS) -o bdtun -lbdtun bdtun_cli.c
+	gcc $(MYCFLAGS) -o bdtun -lbdtun bdtun_cli.c
 
 libbdtun.so: libbdtun.c bdtun.h
-	gcc $(MYCFLAGS) $(EXTRA_CFLAGS) -shared -c -o libbdtun.so libbdtun.c
+	gcc $(MYCFLAGS) -shared -c -o libbdtun.so libbdtun.c
 
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean

@@ -101,8 +101,10 @@ int bdtun_remove(int fd, const char *name) {
         int ret;
         struct bdtun_ctrl_command c;
         
+        printf("Removing device: %s\n", name);
+        
         c.command = BDTUN_COMM_REMOVE;
-        strncpy(c.create.name, name, 32);
+        strncpy(c.remove.name, name, 32);
         
         ret = write(fd, &c, BDTUN_COMM_REMOVE_SIZE);
         
