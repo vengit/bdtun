@@ -69,18 +69,16 @@ int bdtun_complete_request(int fd, struct bdtun_txreq *req) {
 /*
  * Create a device pair with the given size and name
  */
-int bdtun_create(int fd, char *name, uint64_t blocksize, uint64_t size) {
-        int len = strlen(name)+1;
-        char buf[1024];
+int bdtun_create(int fd, const char *name, uint64_t blocksize, uint64_t size) {
         int ret;
+        struct bdtun_ctrl_command c;
         
-        // TODO: name limit!!!!!
-        // TODO: we sooo need macros / structs for writing / reading these
-        memcpy(buf, name, len);
-        memcpy(buf + len, &blocksize, 8);
-        memcpy(buf + len + 8, &blocksize, 8);
+        c.command = BDTUN_COMM_CREATE;
+        c.create.blocksize = blocksize;
+        c.create.size = size;
+        strncpy(c.create.name, name, 32);
         
-        ret = write(fd, buf, len + 16);
+        ret = write(fd, &c, BDTUN_COMM_CREATE_SIZE);
         
         if (ret < 0) {
                 return ret;
@@ -92,25 +90,33 @@ int bdtun_create(int fd, char *name, uint64_t blocksize, uint64_t size) {
 /*
  * Resize an existing block device
  */
-int bdtun_resize(int fd, char *name, uint64_t blocksize, uint64_t size) {
+int bdtun_resize(int fd, const char *name, uint64_t blocksize, uint64_t size) {
         return 0;
 }
 
 /*
  * Remove a device pair
  */
-int bdtun_remove(int fd, char *name) {
-        int ret = write(fd, name, strlen(name) + 1);
+int bdtun_remove(int fd, const char *name) {
+        int ret;
+        struct bdtun_ctrl_command c;
+        
+        c.command = BDTUN_COMM_REMOVE;
+        strncpy(c.create.name, name, 32);
+        
+        ret = write(fd, &c, BDTUN_COMM_REMOVE_SIZE);
+        
         if (ret < 0) {
                 return ret;
         }
+        
         return 0;
 }
 
 /*
  * Get information about a device
  */
-int bdtun_info(int fd, char *name, struct bdtun_info *info) {
+int bdtun_info(int fd, const char *name, struct bdtun_info *info) {
         return 0;
 }
 

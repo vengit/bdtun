@@ -31,10 +31,10 @@ extern "C" {
  * Block tunnel transfer requests
  */
 struct bdtun_txreq {
-	unsigned long flags;
-	unsigned long offset;
-	unsigned long size;
-	char *buf;
+        unsigned long flags;
+        unsigned long offset;
+        unsigned long size;
+        char *buf;
 };
 
 #define BDTUN_TXREQ_HEADER_SIZE sizeof(struct bdtun_txreq)-sizeof(char *)
@@ -43,27 +43,60 @@ struct bdtun_txreq {
  * Information on a device pair
  */
 struct bdtun_info {
-	char *bd_name;
-	int bd_major;
-	int bd_minor;
-	uint64_t bd_size;
-	size_t bd_block_size;
-	char *ch_name;
-	int ch_major;
-	int ch_minor;
+        char *bd_name;
+        int bd_major;
+        int bd_minor;
+        uint64_t bd_size;
+        uint64_t bd_block_size;
+        char *ch_name;
+        int ch_major;
+        int ch_minor;
 };
+
+struct bdtun_ctrl_command {
+        char command;
+        union {
+                struct {
+                        uint64_t blocksize;
+                        uint64_t size;
+                        char name[32];
+                } create;
+                struct {
+                        char name[32];
+                } info;
+                struct {
+                        size_t offset;
+                        size_t maxdevices;
+                } list;
+                struct {
+                        uint64_t blocksize;
+                        uint64_t size;
+                        char name[32];
+                } resize;
+                struct {
+                        char name[32];
+                } remove;
+        };
+};
+
+// TODO: investigate various sizes
+#define BDTUN_COMM_CREATE_SIZE sizeof(struct bdtun_ctrl_command)
+#define BDTUN_COMM_INFO_SIZE   sizeof(struct bdtun_ctrl_command)
+#define BDTUN_COMM_LIST_SIZE   sizeof(struct bdtun_ctrl_command)
+#define BDTUN_COMM_REMOVE_SIZE sizeof(struct bdtun_ctrl_command)
+#define BDTUN_COMM_RESIZE_SIZE sizeof(struct bdtun_ctrl_command)
 
 int bdtun_read_request(int fd, struct bdtun_txreq *rq);
 
 int bdtun_complete_request(int fd, struct bdtun_txreq *req);
 
-int bdtun_create(int fd, char *name, uint64_t blocksize, uint64_t size);
+int bdtun_create(int fd, const char *name, uint64_t blocksize, uint64_t size);
 
-int bdtun_resize(int fd, char *name, uint64_t blocksize, uint64_t size);
+int bdtun_resize(int fd, const char *name, uint64_t blocksize, uint64_t size);
 
-int bdtun_remove(int fd, char *name);
+int bdtun_remove(int fd, const char *name);
 
-int bdtun_info(int fd, char *name, struct bdtun_info *info);
+int bdtun_info(int fd, const char *name, struct bdtun_info *info);
 
 char **bdtun_list(int fd, size_t offset, size_t maxdevices);
 

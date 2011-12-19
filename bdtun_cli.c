@@ -21,7 +21,7 @@ void usage() {
 }
 
 int main(int argc, char **argv) {
-	int f;
+	int f, ret;
     // TODO: grab some nice argument parser lib
     // TODO: for now, it's just add and remove.
     
@@ -47,8 +47,9 @@ int main(int argc, char **argv) {
 			return 3;
 		}
 		
-		if (bdtun_create(f, argv[2], atoi(argv[3]), atoi(argv[4])) < 0) {
+		if (ret = bdtun_create(f, argv[2], atoi(argv[3]), atoi(argv[4])) < 0) {
 			printf("Operation failed\n");
+			PDEBUG("Return value was %d\n", ret);
 			return 4;
 		}
 		
@@ -67,8 +68,9 @@ int main(int argc, char **argv) {
 			return 3;
 		}
 		
-		if (bdtun_remove(f, argv[2]) < 0) {
+		if (ret = bdtun_remove(f, argv[2]) < 0) {
 			printf("Operation failed\n");
+			PDEBUG("Return value was %d\n", ret);
 			return 4;
 		}
 		

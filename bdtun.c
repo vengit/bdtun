@@ -123,7 +123,8 @@ LIST_HEAD(device_list);
  */
 #define KERNEL_SECTOR_SIZE 512
 
-static void bdtun_do_add_disk(struct work_struct *work)        {
+static void bdtun_do_add_disk(struct work_struct *work)
+{
         struct bdtun_add_disk_work *w = container_of(work, struct bdtun_add_disk_work, work);
         
         add_disk(w->gd);
@@ -132,7 +133,8 @@ static void bdtun_do_add_disk(struct work_struct *work)        {
 /*
  * Request processing
  */
-static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
+static int bdtun_make_request(struct request_queue *q, struct bio *bio)
+{
         struct bdtun *dev = q->queuedata;
         
         struct bdtun_bio_list_entry *new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_ATOMIC);
@@ -159,7 +161,8 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio) {
 /*
  *  Get the "drive geometry"
  */
-static int bdtun_getgeo (struct block_device *bdev, struct hd_geometry *geo) {
+static int bdtun_getgeo (struct block_device *bdev, struct hd_geometry *geo)
+{
         long size;
         struct bdtun *dev = bdev->bd_disk->private_data;
         
@@ -187,14 +190,16 @@ static struct block_device_operations bdtun_ops = {
  * Character device
  */
 
-static int bdtunch_open(struct inode *inode, struct file *filp) {
+static int bdtunch_open(struct inode *inode, struct file *filp)
+{
         struct bdtun *dev = container_of(inode->i_cdev, struct bdtun, ch_dev);
         filp->private_data = dev;
         PDEBUG("got device_open on char dev\n");
         return 0;
 }
 
-static int bdtunch_release(struct inode *inode, struct file *filp) {
+static int bdtunch_release(struct inode *inode, struct file *filp)
+{
         PDEBUG("got device_release on char dev\n");
         return 0;
 }
@@ -204,7 +209,8 @@ static int bdtunch_release(struct inode *inode, struct file *filp) {
  * We don't know if the bio will complete at this point.
  * Writes to the char device will complete the bio-s.
  */
-static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *f_pos) {
+static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *f_pos)
+{
         struct bdtun *dev = filp->private_data;
         struct bdtun_bio_list_entry *entry;
         struct bdtun_txreq *req;
@@ -315,7 +321,8 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         return count;
 }
 
-static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, loff_t *offset) {
+static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, loff_t *offset)
+{
         struct bdtun *dev = filp->private_data;
         struct bdtun_bio_list_entry *entry;
         struct bio_vec *bvec;
@@ -400,7 +407,8 @@ static struct file_operations bdtunch_ops = {
  * Device list management auxilliary functions
  */
 
-static struct bdtun *bdtun_find_device(const char *name) {
+static struct bdtun *bdtun_find_device(const char *name)
+{
         struct list_head *ptr;
         struct bdtun *entry;
         
@@ -416,7 +424,8 @@ static struct bdtun *bdtun_find_device(const char *name) {
 /*
  *  Commands to manage devices
  */
-static int bdtun_create_k(const char *name, int block_size, uint64_t size) {
+static int bdtun_create_k(const char *name, int block_size, uint64_t size)
+{
         struct bdtun *new;
         struct request_queue *queue;
         int error;
@@ -572,7 +581,8 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size) {
                 return -ENOMEM;
 }
 
-static int bdtun_remove_k(const char *name) {
+static int bdtun_remove_k(const char *name)
+{
         struct bdtun *dev;
         
         dev = bdtun_find_device(name);
@@ -606,14 +616,16 @@ static int bdtun_remove_k(const char *name) {
         return 0;
 }
 
-static int bdtun_info_k(char *name, struct bdtun_info *device_info) {
+static int bdtun_info_k(char *name, struct bdtun_info *device_info)
+{
         struct bdtun *dev = bdtun_find_device(name);
         device_info->bd_name = name;
         device_info->bd_size = dev->bd_size;
         return 0;
 }
 
-static void bdtun_list_k(char **ptrs, size_t offset, size_t maxdevices) {
+static void bdtun_list_k(char **ptrs, size_t offset, size_t maxdevices)
+{
         struct list_head *ptr;
         struct bdtun *entry;
         int i;
@@ -637,13 +649,15 @@ static void bdtun_list_k(char **ptrs, size_t offset, size_t maxdevices) {
 /*
  * Control device functions
  */
-static int ctrl_open(struct inode *inode, struct file *filp) {
+static int ctrl_open(struct inode *inode, struct file *filp)
+{
         /* Allow only one open: grab lock, increase count */
         PDEBUG("got device_open on master dev\n");
         return 0;
 }
 
-static int ctrl_release(struct inode *inode, struct file *filp) {
+static int ctrl_release(struct inode *inode, struct file *filp)
+{
         /* Grab lock, decrement usage count */
         PDEBUG("got device_release on master dev\n");
         return 0;
@@ -655,7 +669,8 @@ static int ctrl_response_size = 0;
 /*
  * Copies last response to user. A 0 sized answer means no answer.
  */
-static ssize_t ctrl_read(struct file *filp, char *buf, size_t count, loff_t *f_pos) {
+static ssize_t ctrl_read(struct file *filp, char *buf, size_t count, loff_t *f_pos)
+{
         int tmp = ctrl_response_size;
         
         if (ctrl_response_size < 0) {
@@ -672,35 +687,34 @@ static ssize_t ctrl_read(struct file *filp, char *buf, size_t count, loff_t *f_p
         return tmp;
 }
 
-static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff_t *offset) {
+static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff_t *offset)
+{
+        struct bdtun_ctrl_command *c;
         
         if (count < 1) {
                 return -EIO;
         }
         
-        /* We'll be doing this all the time. Maybe a better framework? */
-        switch (buf[0]) {
-                case BDTUN_COMM_CREATE:
-                        /* Params: block size, size in bytes, 0 terminated device name */
-                        if (count <= 2 * sizeof(unsigned long)) {
-                                return -EIO;
-                        }
-                        // TODO: ugly as fuck.
-                        return bdtun_create_k(buf + 9 + sizeof(unsigned long), *(uint64_t *)(buf + 1), *(uint64_t *)(buf + 1 + sizeof(unsigned long)));
-                case BDTUN_COMM_REMOVE:
-                        /* Params: 0 terminated device name */
-                        // TODO: is it really safe to suck up strings like this from userspace?
-                        return bdtun_remove_k(buf);
-                case BDTUN_COMM_LIST:
-                        /* Params: offset, count */
-                case BDTUN_COMM_INFO:
-                        /* Params: device index */
-                case BDTUN_COMM_RESIZE:
-                        /* Params: device index, blocksize, size in bytes */
-                        // TODO: how to communicate this with the client?
-                default:
+        c = (struct bdtun_ctrl_command *) buf;
+        
+        switch (c->command) {
+        case BDTUN_COMM_CREATE:
+                if (count < BDTUN_COMM_CREATE_SIZE) {
                         return -EIO;
-                        break;
+                }
+                return bdtun_create_k(c->create.name, c->create.blocksize, c->create.size);
+        case BDTUN_COMM_REMOVE:
+                if (count < BDTUN_COMM_REMOVE_SIZE) {
+                        return -EIO;
+                }
+                return bdtun_remove_k(c->remove.name);
+        case BDTUN_COMM_LIST:
+        case BDTUN_COMM_INFO:
+        case BDTUN_COMM_RESIZE:
+                // TODO: how to communicate this with the client?
+        default:
+                return -EIO;
+                break;
         }
         
         return count;
@@ -719,7 +733,8 @@ static struct file_operations ctrl_ops = {
 /*
  * Initialize module
  */
-static int __init bdtun_init(void) {
+static int __init bdtun_init(void)
+{
         int error;
         
         /*
@@ -784,7 +799,8 @@ static int __init bdtun_init(void) {
 /*
  * Clean up on module remove
  */
-static void __exit bdtun_exit(void) {
+static void __exit bdtun_exit(void)
+{
         flush_workqueue(add_disk_q);
         destroy_workqueue(add_disk_q);
         device_destroy(chclass, ctrl_devnum);
