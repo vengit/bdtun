@@ -22,10 +22,11 @@ void usage() {
 
 int main(int argc, char **argv) {
 	int f, ret;
+	struct bdtun_info info;
     // TODO: grab some nice argument parser lib
     // TODO: for now, it's just add and remove.
     
-    printf("*** bdtun EXPERIMENTAL version. Only create and remove are implemented. ***\n");
+    printf("*** bdtun EXPERIMENTAL version. Only create, remove, and info are implemented. ***\n");
     
     if (argc < 2) {
 		usage();
@@ -47,7 +48,7 @@ int main(int argc, char **argv) {
 			return 3;
 		}
 		
-		if (ret = bdtun_create(f, argv[2], atoi(argv[3]), atoi(argv[4])) < 0) {
+		if ((ret = bdtun_create(f, argv[2], atoi(argv[3]), atoi(argv[4]))) < 0) {
 			printf("Operation failed\n");
 			PDEBUG("Return value was %d\n", ret);
 			return 4;
@@ -68,11 +69,46 @@ int main(int argc, char **argv) {
 			return 3;
 		}
 		
-		if (ret = bdtun_remove(f, argv[2]) < 0) {
+		if ((ret = bdtun_remove(f, argv[2])) < 0) {
 			printf("Operation failed\n");
 			PDEBUG("Return value was %d\n", ret);
 			return 4;
 		}
+		
+		close(f);
+		return 0;
+	}
+
+	if (strcmp(argv[1], "info") == 0) {
+		if (argc != 3) {
+			usage();
+			return 1;
+		}
+		f = open("/dev/bdtun", O_RDWR);
+		if (f < 0) {
+			printf("Could not open control device /dev/bdtun\n");
+			return 3;
+		}
+		
+		if ((ret = bdtun_info(f, argv[2], &info)) < 0) {
+			printf("Operation failed\n");
+			PDEBUG("Return value was %d\n", ret);
+			return 4;
+		}
+		
+		printf(
+			"Information for device %s:\n\n"
+			"Size in bytes:      %" PRIu64 "\n"
+			"Block size:         %" PRIu64 "\n"
+			"Block device major: %d\n"
+			"Block device minor: %d\n"
+			"Char device major:  %d\n"
+			"Char device minor:  %d\n\n",
+			argv[2],
+			info.bd_size, info.bd_block_size,
+			info.bd_major, info.bd_minor,
+			info.ch_major, info.ch_minor			
+		);
 		
 		close(f);
 		return 0;

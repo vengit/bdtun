@@ -447,6 +447,7 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
          */
         new = vmalloc(sizeof (struct bdtun));
         if (new == NULL) {
+                PDEBUG("Could not allocate memory for device structure\n");
                 return -ENOMEM;
                 // TODO: use the correct return values
         }
@@ -482,6 +483,7 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
         queue = blk_alloc_queue(GFP_KERNEL);
 
         if (queue == NULL) {
+                PDEBUG("Could not allocate request queue\n");
                 goto out_vfree;
         }
         
@@ -507,6 +509,7 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
          */
         new->bd_gd = alloc_disk(16);
         if (!new->bd_gd) {
+                PDEBUG("Unable to alloc_disk()\n");
                 goto out_unregister_blkdev;
         }
         new->bd_gd->major = bd_major;
@@ -554,15 +557,15 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
          */
         list_add_tail(&new->list, &device_list);
         
-        PDEBUG("module init finished\n");
-        
         /*
          * Register the disk in a tasklet.
          */
         INIT_WORK(&add_disk_work.work, bdtun_do_add_disk);
         add_disk_work.gd = new->bd_gd;
         queue_work(add_disk_q, &add_disk_work.work);
-
+        
+        PDEBUG("finished setting up device %s\n", name);
+        
         return 0;
         
         out_cdev_del:
@@ -619,8 +622,16 @@ static int bdtun_remove_k(const char *name)
 static int bdtun_info_k(char *name, struct bdtun_info *device_info)
 {
         struct bdtun *dev = bdtun_find_device(name);
-        device_info->bd_name = name;
-        device_info->bd_size = dev->bd_size;
+        
+        if (dev == NULL)
+                return -ENOENT;
+        
+        device_info->bd_size       = dev->bd_size;
+        device_info->bd_block_size = dev->bd_block_size;
+        device_info->bd_major      = dev->bd_gd->major;
+        device_info->bd_minor      = dev->bd_gd->first_minor;
+        device_info->ch_major      = MAJOR(dev->ch_num);
+        
         return 0;
 }
 
@@ -690,12 +701,17 @@ static ssize_t ctrl_read(struct file *filp, char *buf, size_t count, loff_t *f_p
 static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff_t *offset)
 {
         struct bdtun_ctrl_command *c;
+        struct bdtun_info info;
+        int ret;
         
         if (count < 1) {
+                PDEBUG("received count < 1\n");
                 return -EIO;
         }
         
         c = (struct bdtun_ctrl_command *) buf;
+        
+        PDEBUG("received command: %d\n", c->command);
         
         switch (c->command) {
         case BDTUN_COMM_CREATE:
@@ -708,8 +724,21 @@ static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff
                         return -EIO;
                 }
                 return bdtun_remove_k(c->remove.name);
-        case BDTUN_COMM_LIST:
         case BDTUN_COMM_INFO:
+                if (count < BDTUN_COMM_INFO_SIZE) {
+                        return -EIO;
+                }
+                
+                ret = bdtun_info_k(c->info.name, &info);
+                
+                if (ret != 0) {
+                        return ret;
+                }
+                
+                memcpy(ctrl_response_buf, &info, ctrl_response_size = sizeof(info));
+                
+                return 0;
+        case BDTUN_COMM_LIST:
         case BDTUN_COMM_RESIZE:
                 // TODO: how to communicate this with the client?
         default:

@@ -101,8 +101,6 @@ int bdtun_remove(int fd, const char *name) {
         int ret;
         struct bdtun_ctrl_command c;
         
-        printf("Removing device: %s\n", name);
-        
         c.command = BDTUN_COMM_REMOVE;
         strncpy(c.remove.name, name, 32);
         
@@ -119,6 +117,24 @@ int bdtun_remove(int fd, const char *name) {
  * Get information about a device
  */
 int bdtun_info(int fd, const char *name, struct bdtun_info *info) {
+        int ret;
+        struct bdtun_ctrl_command c;
+        
+        c.command = BDTUN_COMM_INFO;
+        strncpy(c.info.name, name, 32);
+        
+        ret = write(fd, &c, BDTUN_COMM_INFO_SIZE);
+        
+        if (ret < 0) {
+                return ret;
+        }
+        
+        ret = read(fd, info, sizeof(struct bdtun_info));
+        
+        if (ret < 0) {
+                return ret;
+        }
+        
         return 0;
 }
 

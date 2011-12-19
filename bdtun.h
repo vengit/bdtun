@@ -43,12 +43,10 @@ struct bdtun_txreq {
  * Information on a device pair
  */
 struct bdtun_info {
-        char *bd_name;
-        int bd_major;
-        int bd_minor;
         uint64_t bd_size;
         uint64_t bd_block_size;
-        char *ch_name;
+        int bd_major;
+        int bd_minor;
         int ch_major;
         int ch_minor;
 };
