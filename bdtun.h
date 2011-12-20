@@ -16,6 +16,14 @@ extern "C" {
 #endif
 
 /*
+ * Size constants
+ */
+#define BDTUN_DEVNAME_SIZE 32
+#define BDTUN_DEVNAMES 32
+#define BDTUN_RESPONSE_SIZE 1024
+#define BDTUN_BD_MINORS 64
+
+/*
  * Device management commands
  */
 #define BDTUN_COMM_CREATE 0
@@ -96,7 +104,7 @@ int bdtun_remove(int fd, const char *name);
 
 int bdtun_info(int fd, const char *name, struct bdtun_info *info);
 
-char **bdtun_list(int fd, size_t offset, size_t maxdevices);
+int bdtun_list(int fd, size_t offset, size_t maxdevices, char ***buf);
 
 #ifdef __cplusplus
 }

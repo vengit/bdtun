@@ -23,10 +23,9 @@ void usage() {
 int main(int argc, char **argv) {
 	int f, ret;
 	struct bdtun_info info;
+	char **names;
     // TODO: grab some nice argument parser lib
     // TODO: for now, it's just add and remove.
-    
-    printf("*** bdtun EXPERIMENTAL version. Only create, remove, and info are implemented. ***\n");
     
     if (argc < 2) {
 		usage();
@@ -109,6 +108,31 @@ int main(int argc, char **argv) {
 			info.bd_major, info.bd_minor,
 			info.ch_major, info.ch_minor			
 		);
+		
+		close(f);
+		return 0;
+	}
+
+	if (strcmp(argv[1], "list") == 0) {
+		if (argc != 2) {
+			usage();
+			return 1;
+		}
+
+		f = open("/dev/bdtun", O_RDWR);
+		if (f < 0) {
+			printf("Could not open control device /dev/bdtun\n");
+			return 3;
+		}
+
+		if ((ret = bdtun_list(f, 0, 32, &names)) < 0) {
+			printf("Operation failed\n");
+			PDEBUG("Return value was %d\n", ret);
+			return 4;
+		}
+
+		printf("Pointers: %p, %p\n", names, names[0]);
+		printf("First device: %s\n", names[0]);
 		
 		close(f);
 		return 0;

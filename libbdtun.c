@@ -141,6 +141,52 @@ int bdtun_info(int fd, const char *name, struct bdtun_info *info) {
 /*
  * List devices
  */
-char **bdtun_list(int fd, size_t offset, size_t maxdevices) {
-        return NULL;
+int bdtun_list(int fd, size_t offset, size_t maxdevices, char ***names)
+{
+        int i, j, ret;
+        struct bdtun_ctrl_command c;
+        static char buf[BDTUN_RESPONSE_SIZE];
+        static char **name_pbuf = NULL;
+        
+        if (name_pbuf == NULL) {
+                name_pbuf = malloc((BDTUN_DEVNAMES + 1)*sizeof(char *));
+        }
+        
+        c.command         = BDTUN_COMM_LIST;
+        c.list.maxdevices = maxdevices;
+        c.list.offset     = offset;
+        
+        ret = write(fd, &c, BDTUN_COMM_LIST_SIZE);
+        
+        if (ret < 0) {
+                return ret;
+        }
+        
+        ret = read(fd, buf, BDTUN_RESPONSE_SIZE);
+        
+        if (ret < 0) {
+                return ret;
+        }
+        
+        memset(name_pbuf, 0, (BDTUN_DEVNAMES + 1)*sizeof(char *));
+        
+        names = &name_pbuf;
+        printf("EEEEE\n");
+        /* There is no names in the buffer, we're done. */
+        if (ret == 0) {
+                name_pbuf[0] = NULL;
+                return 0;
+        }
+        printf("DEBUG: %s\n", buf);
+        /* - Names are always longer than 0 
+         * - There is at least one name */
+        name_pbuf[0] = buf;
+        j = 0;
+        for (i = 1; i < ret; i++) {
+                if (buf[i] == 0) {
+                        name_pbuf[j-1] = buf + i + 1;
+                }
+        }
+        
+        return 0;
 }

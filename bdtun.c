@@ -430,16 +430,16 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
         struct request_queue *queue;
         int error;
         int bd_major;
-        char charname[37];
-        char qname[35];
+        char charname[BDTUN_DEVNAME_SIZE + 5];
+        char qname[BDTUN_DEVNAME_SIZE + 3];
         
         /*
          * Set up character device and workqueue name
          */
         // TODO: this feels ugly. maybe a nicer way to do this?
-        strncpy(charname, name, 32);
+        strncpy(charname, name, BDTUN_DEVNAME_SIZE);
         strcat(charname, "_tun");
-        strncpy(qname, name, 32);
+        strncpy(qname, name, BDTUN_DEVNAME_SIZE);
         strcat(qname, "_q");
         
         /*
@@ -507,7 +507,7 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
         /*
          * And the gendisk structure.
          */
-        new->bd_gd = alloc_disk(16);
+        new->bd_gd = alloc_disk(BDTUN_BD_MINORS);
         if (!new->bd_gd) {
                 PDEBUG("Unable to alloc_disk()\n");
                 goto out_unregister_blkdev;
@@ -635,26 +635,35 @@ static int bdtun_info_k(char *name, struct bdtun_info *device_info)
         return 0;
 }
 
-static void bdtun_list_k(char **ptrs, size_t offset, size_t maxdevices)
+static int bdtun_list_k(
+        char *buf, const int bufsize, const int maxdevices_internal,
+        size_t offset, size_t maxdevices)
 {
         struct list_head *ptr;
         struct bdtun *entry;
-        int i;
+        int i, bufpos, len;
         
-        memset(ptrs, 0, maxdevices);
         i = 0;
+        bufpos = 0;
         list_for_each(ptr, &device_list) {
                 if (offset > 0) {
                         offset--;
                         continue;
                 }
-                if (i >= maxdevices) {
+                if (i >= maxdevices || i >= maxdevices_internal) {
                         break;
                 }
                 entry = list_entry(ptr, struct bdtun, list);
-                ptrs[i] = entry->bd_gd->disk_name;
+                len = strlen(entry->bd_gd->disk_name)+1;
+                if (bufpos + len > bufsize) {
+                        break;
+                }
+                memcpy(buf + bufpos, entry->bd_gd->disk_name, len);
+                bufpos += len;
                 i++;
         }
+        
+        return bufpos;
 }
 
 /*
@@ -674,7 +683,7 @@ static int ctrl_release(struct inode *inode, struct file *filp)
         return 0;
 }
 
-static char ctrl_response_buf[1024];
+static char ctrl_response_buf[BDTUN_RESPONSE_SIZE];
 static int ctrl_response_size = 0;
 
 /*
@@ -718,12 +727,25 @@ static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff
                 if (count < BDTUN_COMM_CREATE_SIZE) {
                         return -EIO;
                 }
-                return bdtun_create_k(c->create.name, c->create.blocksize, c->create.size);
+                ret = bdtun_create_k(c->create.name, c->create.blocksize, c->create.size);
+                
+                if (ret < 0) {
+                        return ret;
+                }
+                
+                break;
         case BDTUN_COMM_REMOVE:
                 if (count < BDTUN_COMM_REMOVE_SIZE) {
                         return -EIO;
                 }
-                return bdtun_remove_k(c->remove.name);
+                
+                ret = bdtun_remove_k(c->remove.name);
+                
+                if (ret < 0) {
+                        return ret;
+                }
+                
+                break;
         case BDTUN_COMM_INFO:
                 if (count < BDTUN_COMM_INFO_SIZE) {
                         return -EIO;
@@ -737,13 +759,22 @@ static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff
                 
                 memcpy(ctrl_response_buf, &info, ctrl_response_size = sizeof(info));
                 
-                return 0;
+                break;
         case BDTUN_COMM_LIST:
+                if (count < BDTUN_COMM_LIST_SIZE) {
+                        return -EIO;
+                }
+                
+                ctrl_response_size = bdtun_list_k(
+                        ctrl_response_buf, BDTUN_RESPONSE_SIZE,
+                        BDTUN_DEVNAMES, c->list.offset, c->list.maxdevices
+                );
+                
+                break;
         case BDTUN_COMM_RESIZE:
                 // TODO: how to communicate this with the client?
         default:
                 return -EIO;
-                break;
         }
         
         return count;
