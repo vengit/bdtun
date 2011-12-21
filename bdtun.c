@@ -566,6 +566,8 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
         
         PDEBUG("finished setting up device %s\n", name);
         
+        try_module_get(THIS_MODULE);
+        
         return 0;
         
         out_cdev_del:
@@ -602,10 +604,7 @@ static void bdtun_remove_dev(struct bdtun *dev)
         /* Unreg device object and class if needed */
         device_destroy(chclass, dev->ch_num);
         
-        /* Unlink and free device structure */
-        list_del(&dev->list);
-        vfree(dev);
-        PDEBUG("device removed from list\n");
+        module_put(THIS_MODULE);
 }
 
 static int bdtun_remove_k(const char *name)
@@ -621,6 +620,11 @@ static int bdtun_remove_k(const char *name)
         
         bdtun_remove_dev(dev);
         
+        /* Unlink and free device structure */
+        list_del(&dev->list);
+        vfree(dev);
+        PDEBUG("device removed from list\n");
+
         return 0;
 }
 
@@ -868,13 +872,10 @@ static void __exit bdtun_exit(void)
 {
         struct list_head *ptr;
 
-        flush_workqueue(add_disk_q);
-
-        // TODO: explicitly check for open control or tunnel devices
-        // before starting cleanup
         list_for_each(ptr, &device_list)
                 bdtun_remove_dev(list_entry(ptr, struct bdtun, list));
 
+        flush_workqueue(add_disk_q);
         destroy_workqueue(add_disk_q);
         device_destroy(chclass, ctrl_devnum);
         cdev_del(&ctrl_dev);
