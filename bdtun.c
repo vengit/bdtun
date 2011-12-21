@@ -584,17 +584,8 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
                 return -ENOMEM;
 }
 
-static int bdtun_remove_k(const char *name)
+static void bdtun_remove_dev(struct bdtun *dev)
 {
-        struct bdtun *dev;
-        
-        dev = bdtun_find_device(name);
-        
-        if (dev == NULL) {
-                PDEBUG("error removing '%s': no such device\n", name);
-                return -ENOENT;
-        }
-        
         /* Destroy block devices */
         PDEBUG("removing block device\n");
         unregister_blkdev(dev->bd_gd->major, "bdtun");
@@ -615,6 +606,20 @@ static int bdtun_remove_k(const char *name)
         list_del(&dev->list);
         vfree(dev);
         PDEBUG("device removed from list\n");
+}
+
+static int bdtun_remove_k(const char *name)
+{
+        struct bdtun *dev;
+        
+        dev = bdtun_find_device(name);
+        
+        if (dev == NULL) {
+                PDEBUG("error removing '%s': no such device\n", name);
+                return -ENOENT;
+        }
+        
+        bdtun_remove_dev(dev);
         
         return 0;
 }
@@ -861,7 +866,15 @@ static int __init bdtun_init(void)
  */
 static void __exit bdtun_exit(void)
 {
+        struct list_head *ptr;
+
         flush_workqueue(add_disk_q);
+
+        // TODO: explicitly check for open control or tunnel devices
+        // before starting cleanup
+        list_for_each(ptr, &device_list)
+                bdtun_remove_dev(list_entry(ptr, struct bdtun, list));
+
         destroy_workqueue(add_disk_q);
         device_destroy(chclass, ctrl_devnum);
         cdev_del(&ctrl_dev);
