@@ -110,14 +110,6 @@ struct cdev ctrl_dev;
 LIST_HEAD(device_list);
 
 /*
- * TODO: master device commands
- * 
- * bdtun create <name> <size>
- * bdtun destroy <name>
- * bdtun resize <name> <size>
- */
-
-/*
  * We can tweak our hardware sector size, but the kernel talks to us
  * in terms of small sectors, always.
  */
@@ -301,8 +293,8 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                         void *kaddr = kmap(bvec->bv_page);
                         // TODO: do direct IO here to speed things up
                         if(copy_to_user(buf+pos, kaddr+bvec->bv_offset, bvec->bv_len) != 0) {
-                                // TODO: error handling
                                 PDEBUG("error copying data to user\n");
+                                kunmap(bvec->bv_page);
                                 return -EFAULT;
                         }
                         kunmap(bvec->bv_page);
@@ -360,8 +352,8 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                 spin_lock_bh(&dev->bio_out_list_lock);
                 list_add(&entry->list, &dev->bio_out_list);
                 spin_unlock_bh(&dev->bio_out_list_lock);
+                entry->header_transferred = 0;
                 PDEBUG("invalid request size from user returning -EIO and re-queueing bio.\n");
-                // bio_endio(entry->bio, -EIO);
                 return -EIO;
         }
         
@@ -372,7 +364,6 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                 bio_for_each_segment(bvec, entry->bio, i) {
                         void *kaddr = kmap(bvec->bv_page);
                         if(copy_from_user(kaddr+bvec->bv_offset, buf+pos, bvec->bv_len) != 0) {
-                                // TODO: error handling
                                 PDEBUG("error copying data from user\n");
                                 kunmap(bvec->bv_page);
                                 bio_endio(entry->bio, -1);
@@ -436,7 +427,6 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
         /*
          * Set up character device and workqueue name
          */
-        // TODO: this feels ugly. maybe a nicer way to do this?
         strncpy(charname, name, BDTUN_DEVNAME_SIZE);
         strcat(charname, "_tun");
         strncpy(qname, name, BDTUN_DEVNAME_SIZE);
@@ -448,8 +438,8 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
         new = vmalloc(sizeof (struct bdtun));
         if (new == NULL) {
                 PDEBUG("Could not allocate memory for device structure\n");
-                return -ENOMEM;
-                // TODO: use the correct return values
+                error = -ENOMEM;
+                goto out;
         }
         
         /*
@@ -484,10 +474,12 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
 
         if (queue == NULL) {
                 PDEBUG("Could not allocate request queue\n");
+                error = -ENOMEM;
                 goto out_vfree;
         }
         
         // TODO: get bd features from command line parameters
+        // e.g. there must be an extra "flags" param in create
         queue->queuedata = new;
         blk_queue_logical_block_size(queue, block_size);
         blk_queue_io_min(queue, block_size);
@@ -499,8 +491,9 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
          * Get registered.
          */
         bd_major = register_blkdev(0, "bdtun");
-        if (bd_major <= 0) {
+        if (bd_major < 0) {
                 PDEBUG("unable to get major number\n");
+                error = bd_major;
                 goto out_cleanup_queue;
         }
         
@@ -510,6 +503,7 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
         new->bd_gd = alloc_disk(BDTUN_BD_MINORS);
         if (!new->bd_gd) {
                 PDEBUG("Unable to alloc_disk()\n");
+                error = -ENOMEM;
                 goto out_unregister_blkdev;
         }
         new->bd_gd->major = bd_major;
@@ -524,7 +518,8 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
          * Initialize character device
          */
         PDEBUG("setting up char device\n");
-        if (alloc_chrdev_region(&new->ch_num, 0, 1, charname) != 0) {
+        error = alloc_chrdev_region(&new->ch_num, 0, 1, charname);
+        if (error) {
                 PDEBUG("could not allocate character device number\n");
                 goto out_del_disk;
         }
@@ -549,6 +544,7 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
         new->ch_device = device_create(chclass, NULL, new->ch_num, NULL, charname);
         if (IS_ERR(new->ch_device)) {
                 PDEBUG("error setting up device object\n");
+                error = -ENOMEM;
                 goto out_cdev_del;
         }
         
@@ -583,7 +579,8 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
                 blk_cleanup_queue(queue);
         out_vfree:
                 vfree(new);
-                return -ENOMEM;
+        out:
+                return error;
 }
 
 static void bdtun_remove_dev(struct bdtun *dev)
@@ -811,6 +808,7 @@ static int __init bdtun_init(void)
          */
         add_disk_q = alloc_workqueue("bdtun_add_disk", 0, 0);
         if (!add_disk_q) {
+                error = -ENOMEM;
                 goto out_err;
         }
                 
@@ -818,9 +816,10 @@ static int __init bdtun_init(void)
          * Set up a device class 
          */
         chclass = class_create(THIS_MODULE, "bdtun");
+        // TODO: how do I get a proper error code here?
         if (IS_ERR(chclass)) {
                 PDEBUG("error setting up device class\n");
-                // TODO: corretct error values throughout the code
+                error = -ENOMEM;
                 goto out_adq;
         }
 
@@ -829,7 +828,8 @@ static int __init bdtun_init(void)
          */
         PDEBUG("setting up char device\n");
 
-        if (alloc_chrdev_region(&ctrl_devnum, 0, 1, "bdtun") != 0) {
+        error = alloc_chrdev_region(&ctrl_devnum, 0, 1, "bdtun");
+        if (error) {
                 printk(KERN_ERR "could not allocate control device number\n");
                 goto out_destroy_class;
         }
@@ -848,6 +848,7 @@ static int __init bdtun_init(void)
         ctrl_device = device_create(chclass, NULL, ctrl_devnum, NULL, "bdtun");
         if (IS_ERR(ctrl_device)) {
                 PDEBUG("error setting up control device object\n");
+                error = -ENOMEM;
                 goto out_cdev_del;
         }
 
