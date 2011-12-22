@@ -54,6 +54,8 @@ struct bdtun_bio_list_entry {
 static struct class *chclass;
 static struct device *ctrl_device;
 static int ctrl_devnum;
+static int ctrl_ucnt;
+static struct spinlock ctrl_lock;
 
 /*
  * BDTun device structure
@@ -83,6 +85,7 @@ struct bdtun {
         
         /* Use count */
         int ucnt;
+        int ch_ucnt;
         
         /* Block device related stuff*/
         unsigned long bd_size;
@@ -213,14 +216,33 @@ static struct block_device_operations bdtun_ops = {
 static int bdtunch_open(struct inode *inode, struct file *filp)
 {
         struct bdtun *dev = container_of(inode->i_cdev, struct bdtun, ch_dev);
-        filp->private_data = dev;
+
         PDEBUG("got device_open on char dev\n");
+        spin_lock(&dev->lock);
+        if (dev->ch_ucnt) {
+                spin_unlock(&dev->lock);
+                return -EBUSY;
+        }
+        if (dev->removing) {
+                spin_unlock(&dev->lock);
+                return -EBUSY;
+        }
+        dev->ch_ucnt++;
+        dev->ucnt++;
+        spin_unlock(&dev->lock);
+        filp->private_data = dev;
         return 0;
 }
 
 static int bdtunch_release(struct inode *inode, struct file *filp)
 {
+        struct bdtun *dev = container_of(inode->i_cdev, struct bdtun, ch_dev);
+
         PDEBUG("got device_release on char dev\n");
+        spin_lock(&dev->lock);
+        dev->ch_ucnt--;
+        dev->ucnt--;
+        spin_unlock(&dev->lock);
         return 0;
 }
 
@@ -483,7 +505,10 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
         spin_lock_init(&new->bio_in_list_lock);
         spin_lock_init(&new->bio_out_list_lock);
         spin_lock_init(&new->lock);
+        
         new->removing = 0;
+        new->ucnt     = 0;
+        new->ch_ucnt  = 0;
         
         /*
          * Wait queues
@@ -716,15 +741,27 @@ static int bdtun_list_k(
  */
 static int ctrl_open(struct inode *inode, struct file *filp)
 {
-        /* Allow only one open: grab lock, increase count */
         PDEBUG("got device_open on master dev\n");
+
+        spin_lock(&ctrl_lock);
+        if (ctrl_ucnt) {
+                spin_unlock(&ctrl_lock);
+                return -EBUSY;
+        }
+        ctrl_ucnt++;
+        spin_unlock(&ctrl_lock);
+        
         return 0;
 }
 
 static int ctrl_release(struct inode *inode, struct file *filp)
 {
-        /* Grab lock, decrement usage count */
         PDEBUG("got device_release on master dev\n");
+
+        spin_lock(&ctrl_lock);
+        ctrl_ucnt--;
+        spin_unlock(&ctrl_lock);
+
         return 0;
 }
 
@@ -841,6 +878,9 @@ static struct file_operations ctrl_ops = {
 static int __init bdtun_init(void)
 {
         int error;
+        
+        spin_lock_init(&ctrl_lock);
+        ctrl_ucnt = 0;
         
         /*
          * Set up a work queue for adding disks
