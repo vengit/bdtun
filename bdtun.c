@@ -78,14 +78,17 @@ struct bdtun {
          */
         spinlock_t bio_out_list_lock;
         spinlock_t bio_in_list_lock;
-        struct semaphore sem;
+        spinlock_t lock;
+        int removing;
+        
+        /* Use count */
+        int ucnt;
         
         /* Block device related stuff*/
         unsigned long bd_size;
         int bd_block_size;
         int bd_nsectors;
         struct gendisk *bd_gd;
-        struct blk_queue_tags *bd_tags;
 };
 
 /*
@@ -150,10 +153,33 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio)
         return 0;
 }
 
-/*
- *  Get the "drive geometry"
- */
-static int bdtun_getgeo (struct block_device *bdev, struct hd_geometry *geo)
+static int bdtun_open(struct block_device *bdev, fmode_t mode)
+{
+        struct bdtun *dev = bdev->bd_disk->queue->queuedata;
+        PDEBUG("bdtun_open()\n");
+        spin_lock(&dev->lock);
+        if (dev->removing) {
+                spin_unlock(&dev->lock);
+                return -ENOENT;
+        }
+        dev->ucnt++;
+        PDEBUG("device counter is %d for %s\n", dev->cnt, dev->bd_gd->disk_name);
+        spin_unlock(&dev->lock);
+        return 0;
+}
+
+static int bdtun_release(struct gendisk *gd, fmode_t mode)
+{
+        struct bdtun *dev = gd->queue->queuedata;
+        PDEBUG("bdtun_release()\n");
+        spin_lock(&dev->lock);
+        dev->ucnt--;
+        PDEBUG("device counter is %d for %s\n", dev->cnt, dev->bd_gd->disk_name);
+        spin_unlock(&dev->lock);
+        return 0;
+}
+
+static int bdtun_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 {
         long size;
         struct bdtun *dev = bdev->bd_disk->private_data;
@@ -174,8 +200,10 @@ static int bdtun_getgeo (struct block_device *bdev, struct hd_geometry *geo)
  * The block device operations structure.
  */
 static struct block_device_operations bdtun_ops = {
-        .owner = THIS_MODULE,
-        .getgeo = bdtun_getgeo
+        .owner   = THIS_MODULE,
+        .open    = bdtun_open,
+        .release = bdtun_release,
+        .getgeo  = bdtun_getgeo
 };
 
 /*
@@ -454,6 +482,8 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
          */
         spin_lock_init(&new->bio_in_list_lock);
         spin_lock_init(&new->bio_out_list_lock);
+        spin_lock_init(&new->lock);
+        new->removing = 0;
         
         /*
          * Wait queues
@@ -614,6 +644,15 @@ static int bdtun_remove_k(const char *name)
                 PDEBUG("error removing '%s': no such device\n", name);
                 return -ENOENT;
         }
+        
+        spin_lock(&dev->lock);
+                
+        if (dev->ucnt) {
+                spin_unlock(&dev->lock);
+                return -EBUSY;
+        }
+        dev->removing = 1;
+        spin_unlock(&dev->lock);
         
         bdtun_remove_dev(dev);
         
