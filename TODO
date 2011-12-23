@@ -1,12 +1,9 @@
-* Create master device
-* Add command handling code into the driver
-  * THREAD SAFETY!!!
-* Compile user space library
-  * create
-  * list
-  * info
-  * remove
-  * open(returns file handler)
-* Add block device request tunneling (structs, .h, lib)
-  * THREAD SAFETY!!!
+* The following capabilities should be create parameters
+  (from linux/blk_types.h)
+        * FLUSH (REQ_FLUSH)
+        * FUA (REQ_FUA)
+        * DISCARD (REQ_DISCARD)
+        * SECURE DISCARD (REQ_DISCARD | REQ_SECURE)
+
+* Do direct IO on tunnel device to speed things up
 * Create python binding for quick prototyping

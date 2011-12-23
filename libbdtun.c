@@ -21,19 +21,20 @@ int bdtun_read_request(int fd, struct bdtun_txreq *rq) {
                 return res;
         }
 
-        /* If the buffer size is less than the request, then realloc */
-        if (bufsize < rq->size) {
-                buf = realloc(buf, rq->size);
+        /* If the buffer size is less than the request
+         * plus the completion byte then realloc */
+        if (bufsize < rq->size + 1) {
+                buf = realloc(buf, rq->size + 1);
                 if (buf == NULL) {
                         return -ENOMEM;
                 }
-                bufsize = rq->size;
+                bufsize = rq->size + 1;
         }
         
-        rq->buf = buf;
+        rq->buf = buf + 1;
         
         if (rq->flags & REQ_WRITE) {
-                printf("Write request, getting data from kernel\n");
+                PDEBUG("Write request, getting data from kernel\n");
                 res = read(fd, rq->buf, rq->size);
                 if (res < 0) {
                         return res;
@@ -49,20 +50,41 @@ int bdtun_read_request(int fd, struct bdtun_txreq *rq) {
  * If it was a read request, the buf member must contain the
  * data read by the user process.
  */
-int bdtun_complete_request(int fd, struct bdtun_txreq *req) {
+int bdtun_complete_request(int fd, struct bdtun_txreq *req)
+{
         int res;
         
+        /* Zero byte means success */
+        req->buf--;
+        req->buf[0] = 0;
+        
         if (req->flags & REQ_WRITE) {
-                printf("Completing write request by completion byte\n");
-                res = write(fd, "\0x06", 1);
+                PDEBUG("Completing write request by completion byte\n");
+                res = write(fd, req->buf, 1);
         } else {
-                printf("Completing read request by sending data\n");
-                res = write(fd, req->buf, req->size);
+                PDEBUG("Completing read request by sending data\n");
+                res = write(fd, req->buf, req->size+1);
         }
+        
+        req->buf++;
+        
         if (res < 0) {
                 return res;
         }
-        
+        return 0;
+}
+
+int bdtun_fail_request(int fd, struct bdtun_txreq *req)
+{
+        int res;
+        /* Non-zero byte means failure */
+        req->buf--;
+        req->buf[0] = 1;
+        res = write(fd, req->buf, 1);
+        req->buf++;
+        if (res < 0) {
+                return res;
+        }
         return 0;
 }
 
@@ -90,7 +112,21 @@ int bdtun_create(int fd, const char *name, uint64_t blocksize, uint64_t size) {
 /*
  * Resize an existing block device
  */
-int bdtun_resize(int fd, const char *name, uint64_t blocksize, uint64_t size) {
+int bdtun_resize(int fd, const char *name, uint64_t size)
+{
+        int ret;
+        struct bdtun_ctrl_command c;
+        
+        c.command = BDTUN_COMM_RESIZE;
+        c.resize.size = size;
+        strncpy(c.resize.name, name, 32);
+        
+        ret = write(fd, &c, BDTUN_COMM_RESIZE_SIZE);
+        
+        if (ret < 0) {
+                return ret;
+        }
+        
         return 0;
 }
 

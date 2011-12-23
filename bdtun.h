@@ -7,7 +7,7 @@ extern "C" {
 #undef PDEBUG
 #ifdef BDTUN_DEBUG
 #  ifdef __KERNEL__
-#    define PDEBUG(fmt, args...) printk(KERN_DEBUG "bdtun: " fmt, ## args)
+#    define PDEBUG(fmt, args...) printk(KERN_INFO "bdtun: " fmt, ## args)
 #  else
 #    define PDEBUG(fmt, args...) printf(fmt, ## args)
 #  endif
@@ -75,7 +75,6 @@ struct bdtun_ctrl_command {
                         size_t maxdevices;
                 } list;
                 struct {
-                        uint64_t blocksize;
                         uint64_t size;
                         char name[32];
                 } resize;
@@ -98,7 +97,7 @@ int bdtun_complete_request(int fd, struct bdtun_txreq *req);
 
 int bdtun_create(int fd, const char *name, uint64_t blocksize, uint64_t size);
 
-int bdtun_resize(int fd, const char *name, uint64_t blocksize, uint64_t size);
+int bdtun_resize(int fd, const char *name, uint64_t size);
 
 int bdtun_remove(int fd, const char *name);
 

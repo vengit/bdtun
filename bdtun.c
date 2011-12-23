@@ -166,7 +166,7 @@ static int bdtun_open(struct block_device *bdev, fmode_t mode)
                 return -ENOENT;
         }
         dev->ucnt++;
-        PDEBUG("device counter is %d for %s\n", dev->cnt, dev->bd_gd->disk_name);
+        PDEBUG("device counter is %d for %s\n", dev->ucnt, dev->bd_gd->disk_name);
         spin_unlock(&dev->lock);
         return 0;
 }
@@ -177,7 +177,7 @@ static int bdtun_release(struct gendisk *gd, fmode_t mode)
         PDEBUG("bdtun_release()\n");
         spin_lock(&dev->lock);
         dev->ucnt--;
-        PDEBUG("device counter is %d for %s\n", dev->cnt, dev->bd_gd->disk_name);
+        PDEBUG("device counter is %d for %s\n", dev->ucnt, dev->bd_gd->disk_name);
         spin_unlock(&dev->lock);
         return 0;
 }
@@ -311,8 +311,8 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
 
         /* Put bio into in list if needed */
         if (bio_data_dir(entry->bio) == READ || entry->header_transferred) {
-                 /* Yes, we remove it from the out list, because the
-                 * next write will complete it. */
+                 /* We remove it from the out list, because the
+                  * next write will complete it. */
                 list_del_init(dev->bio_out_list.next);
                 
                 /* Ok, the "in" list is not empty, and we're holding the lock.
@@ -333,15 +333,12 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         PDEBUG("releasing out queue spinlock\n");
         spin_unlock_bh(&dev->bio_out_list_lock);
         
-        // TODO: need proper locking here. Use the semaphore.
-        // TODO: maybe we need a semaphore in the structure itself?
-        
         /* Do actual copying, if request size is valid. */
         if (entry->header_transferred) {
                 /* Transfer bio data. */
                 bio_for_each_segment(bvec, entry->bio, i) {
                         void *kaddr = kmap(bvec->bv_page);
-                        // TODO: do direct IO here to speed things up
+                        
                         if(copy_to_user(buf+pos, kaddr+bvec->bv_offset, bvec->bv_len) != 0) {
                                 PDEBUG("error copying data to user\n");
                                 kunmap(bvec->bv_page);
@@ -396,8 +393,26 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         list_del_init(dev->bio_in_list.next); /* We might re-queue */
         spin_unlock_bh(&dev->bio_in_list_lock);
         
+        /* Preliminary request size validation */
+        if (count < 1) {
+                spin_lock_bh(&dev->bio_out_list_lock);
+                list_add(&entry->list, &dev->bio_out_list);
+                spin_unlock_bh(&dev->bio_out_list_lock);
+                entry->header_transferred = 0;
+                PDEBUG("request is shorter than one, returning -EIO and re-queueing bio.\n");
+                return -EIO;
+        }
+        
+        /* Read completion byte */
+        if (buf[0]) {
+                PDEBUG("user process explicitly signaled failure, failing bio.\n");
+                bio_endio(entry->bio, -1);
+                kfree(entry);
+                return 0;
+        }
+        
         /* Validate write request size */
-        if ((bio_data_dir(entry->bio) == READ && count != entry->bio->bi_size) ||
+        if ((bio_data_dir(entry->bio) == READ && count != entry->bio->bi_size + 1) ||
             (bio_data_dir(entry->bio) == WRITE && count != 1)) {
                 spin_lock_bh(&dev->bio_out_list_lock);
                 list_add(&entry->list, &dev->bio_out_list);
@@ -407,7 +422,7 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                 return -EIO;
         }
         
-        // TODO: read the completion byte
+        buf++;
         
         /* Copy the data into the bio */
         if (bio_data_dir(entry->bio) == READ) {
@@ -416,7 +431,10 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                         if(copy_from_user(kaddr+bvec->bv_offset, buf+pos, bvec->bv_len) != 0) {
                                 PDEBUG("error copying data from user\n");
                                 kunmap(bvec->bv_page);
-                                bio_endio(entry->bio, -1);
+                                spin_lock_bh(&dev->bio_out_list_lock);
+                                list_add(&entry->list, &dev->bio_out_list);
+                                spin_unlock_bh(&dev->bio_out_list_lock);
+                                entry->header_transferred = 0;
                                 return -EFAULT;
                         }
                         kunmap(bvec->bv_page);
@@ -533,8 +551,6 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
                 goto out_vfree;
         }
         
-        // TODO: get bd features from command line parameters
-        // e.g. there must be an extra "flags" param in create
         queue->queuedata = new;
         blk_queue_logical_block_size(queue, block_size);
         blk_queue_io_min(queue, block_size);
@@ -636,6 +652,23 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
                 vfree(new);
         out:
                 return error;
+}
+
+static int bdtun_resize_k(const char *name, uint64_t size)
+{
+        struct bdtun *dev;
+        
+        dev = bdtun_find_device(name);
+        
+        if (dev == NULL) {
+                PDEBUG("error removing '%s': no such device\n", name);
+                return -ENOENT;
+        }
+        
+        dev->bd_size = size;
+        set_capacity(dev->bd_gd, dev->bd_size / KERNEL_SECTOR_SIZE);
+        
+        return 0;
 }
 
 static void bdtun_remove_dev(struct bdtun *dev)
@@ -854,7 +887,17 @@ static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff
                 
                 break;
         case BDTUN_COMM_RESIZE:
-                // TODO: how to communicate this with the client?
+                if (count < BDTUN_COMM_RESIZE_SIZE) {
+                        return -EIO;
+                }
+                
+                ret = bdtun_resize_k(c->resize.name, c->resize.size);
+                
+                if (ret != 0) {
+                        return ret;
+                }
+                
+                break;
         default:
                 return -EIO;
         }
@@ -895,7 +938,6 @@ static int __init bdtun_init(void)
          * Set up a device class 
          */
         chclass = class_create(THIS_MODULE, "bdtun");
-        // TODO: how do I get a proper error code here?
         if (IS_ERR(chclass)) {
                 PDEBUG("error setting up device class\n");
                 error = -ENOMEM;

@@ -124,6 +124,23 @@ int main(int argc, char **argv) {
                 close(f);
                 return 0;
         }
+        if (strcmp(argv[1], "resize") == 0) {
+                if (argc != 4) {
+                        usage();
+                        return 1;
+                }
+                
+                f = open_ctrldev();
+                
+                if ((ret = bdtun_resize(f, argv[2], atoi(argv[3]))) < 0) {
+                        printf("Operation failed\n");
+                        PDEBUG("Return value was %d\n", ret);
+                        return 4;
+                }
+                
+                close(f);
+                return 0;
+        }
         printf("No such command: %s\n", argv[1]);
         return 2;
 }
