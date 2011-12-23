@@ -1,3 +1,6 @@
+#ifndef __BDTUN_H
+#define __BDTUN_H
+
 #include <linux/blk_types.h>
 
 #ifdef __cplusplus
@@ -107,4 +110,6 @@ int bdtun_list(int fd, size_t offset, size_t maxdevices, char ***buf);
 
 #ifdef __cplusplus
 }
+#endif
+
 #endif
