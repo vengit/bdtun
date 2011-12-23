@@ -7,7 +7,7 @@ extern "C" {
 #undef PDEBUG
 #ifdef BDTUN_DEBUG
 #  ifdef __KERNEL__
-#    define PDEBUG(fmt, args...) printk(KERN_INFO "bdtun: " fmt, ## args)
+#    define PDEBUG(fmt, args...) printk(KERN_WARNING "bdtun: " fmt, ## args)
 #  else
 #    define PDEBUG(fmt, args...) printf(fmt, ## args)
 #  endif
