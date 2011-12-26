@@ -657,16 +657,25 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
 static int bdtun_resize_k(const char *name, uint64_t size)
 {
         struct bdtun *dev;
+        int ret;
         
         dev = bdtun_find_device(name);
         
         if (dev == NULL) {
                 PDEBUG("error removing '%s': no such device\n", name);
+                // TODO set_capacity(old_capacity) here
                 return -ENOENT;
         }
         
+        set_capacity(dev->bd_gd, size / KERNEL_SECTOR_SIZE);
+        ret = revalidate_disk(dev->bd_gd);
+        
+        if (ret) {
+                PDEBUG("could not revalidate_disk after capacity change\n");
+                return ret;
+        }
+        
         dev->bd_size = size;
-        set_capacity(dev->bd_gd, dev->bd_size / KERNEL_SECTOR_SIZE);
         
         return 0;
 }
