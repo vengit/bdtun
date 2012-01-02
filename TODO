@@ -1,3 +1,4 @@
+* Proper GNU build system
 * The following capabilities should be create parameters
   (from linux/blk_types.h)
         * FLUSH (REQ_FLUSH)

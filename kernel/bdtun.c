@@ -20,7 +20,7 @@
 #include <linux/workqueue.h>
 #include <linux/spinlock.h>
 
-#include "bdtun.h"
+#include "../include/bdtun.h"
 
 MODULE_LICENSE("GPL");
 
