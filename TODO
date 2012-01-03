@@ -1,5 +1,6 @@
 * Find out stuff about blk_queue_limit and make_request
 * Find out how to user zero copy IO
+* Use argparse in bdtun and bdtunloop programs
 * The following capabilities should be create parameters
   (from linux/blk_types.h)
         * FLUSH (REQ_FLUSH)
