@@ -48,18 +48,20 @@ int main(int argc, char *argv[]) {
         }
         
         /* Start "event loop" */
-        printf("Starting event loop\n");
+        PDEBUG("Starting event loop\n");
         for ever {
                 
                 /* Read a request */
-                printf("Reading request\n");
+                PDEBUG("Reading request\n");
                 if((ret = bdtun_read_request(bdtunch, &req)) != 0) {
                         printf("(3) Counld not get request from device: %d\n", ret);
                         return -1;
                 }
+                PDEBUG("Size is %lu\n", req.size);
+                printf("%lu ", req.size);
                 
                 /* Set position in backing file */
-                printf("Seeking in image\n");
+                PDEBUG("Seeking in image\n");
                 if(lseek(img, req.offset, SEEK_SET) != req.offset) {
                         printf("(4) Unable to set disk image position.\n");
                         return 1;
@@ -67,13 +69,13 @@ int main(int argc, char *argv[]) {
 
                 /* Read / write backing file */
                 if (req.flags & REQ_WRITE) {
-                        printf("Writing to disk image\n");
+                        PDEBUG("Writing to disk image\n");
                         if((ret = write(img, req.buf, req.size)) != req.size) {
                                 printf("(5) Unable to write disk image: %d\n", ret);
                                 return 1;
                         }
                 } else {
-                        printf("Reading from disk image\n");
+                        PDEBUG("Reading from disk image\n");
                         if((ret = read(img, req.buf, req.size)) != req.size) {
                                 printf("(6) Unable to read from disk image: %d\n", ret);
                                 return 1;
@@ -81,7 +83,7 @@ int main(int argc, char *argv[]) {
                 }
                 
                 /* Complete request */
-                printf("Completing request\n");
+                PDEBUG("Completing request\n");
                 if(bdtun_complete_request(bdtunch, &req)) {
                         printf("(7) Unable to signal completion on write: %d\n", ret);
                 }

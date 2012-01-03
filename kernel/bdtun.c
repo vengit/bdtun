@@ -552,9 +552,9 @@ static int bdtun_create_k(const char *name, int block_size, uint64_t size)
         }
         
         queue->queuedata = new;
+        blk_queue_make_request(queue, bdtun_make_request);
         blk_queue_logical_block_size(queue, block_size);
         blk_queue_io_min(queue, block_size);
-        blk_queue_make_request(queue, bdtun_make_request);
         blk_queue_flush(queue, REQ_FLUSH | REQ_FUA);
         blk_queue_discard(queue);
         
