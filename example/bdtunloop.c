@@ -17,7 +17,7 @@
 #define REQSIZE sizeof(struct bdtun_txreq)
 
 void usage() {
-        printf("Usage: testclient <bdtun chardev> <disk image>\n\n");
+        printf("Usage: bdtunloop <bdtun chardev> <disk image>\n\n");
 }
 
 int main(int argc, char *argv[]) {

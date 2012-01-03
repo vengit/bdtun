@@ -1,4 +1,4 @@
-bin_PROGRAMS = testclient
+bin_PROGRAMS = bdtunloop
 
-testclient_SOURCES = testclient.c
-testclient_LDADD = ../lib/libbdtun.lo
+bdtunloop_SOURCES = bdtunloop.c
+bdtunloop_LDADD = ../lib/libbdtun.lo

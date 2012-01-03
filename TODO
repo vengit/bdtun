@@ -1,4 +1,5 @@
-* Proper GNU build system
+* Find out stuff about blk_queue_limit and make_request
+* Find out how to user zero copy IO
 * The following capabilities should be create parameters
   (from linux/blk_types.h)
         * FLUSH (REQ_FLUSH)
@@ -6,5 +7,4 @@
         * DISCARD (REQ_DISCARD)
         * SECURE DISCARD (REQ_DISCARD | REQ_SECURE)
 
-* Do direct IO on tunnel device to speed things up
 * Create python binding for quick prototyping

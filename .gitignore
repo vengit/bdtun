@@ -11,7 +11,7 @@
 Module.symvers
 modules.order
 
-testclient
+bdtunloop
 bdtun
 
 autom4te.cache
