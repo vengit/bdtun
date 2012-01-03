@@ -1,0 +1,10 @@
+Author:
+
+Fábián Tamás László <giganetom@gmail.com>
+
+Special thanks to:
+
+Pék Dániel <daniel.pek@vengit.com>
+
+for testing the module. At the early times it meant frequent kernel
+oops, panics and deadlocks.

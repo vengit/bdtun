@@ -1,24 +1,51 @@
-Installing bdtun
+Installing from git
+~~~~~~~~~~~~~~~~~~~
 
-To install bdtun do the following:
+From revision f9e496211775798301a15b52ddad29af91abb143 a script
 
-cd bdtun # make bdtun directory current
+./mkbuildenv
+
+is available. (Re)running this script copies/generates the necessary
+files, so you can continue with the "Installing from tarball" section.
+
+You need the following tools to be able to do this step:
+
+libtoolize 2.4
+aclocal    1.11.1
+autoheader 2.68
+automake   1.11.1
+autoconf   2.68
+
+(This means libtoolize 2.4, automake 1.11.1 and autoconf 2.68 packages)
+
+If you are trying to build from an earlyer revision, you either have to
+issue these commands properly by hand, or grab the mkbuildenv script
+from the revision mentioned above.
+
+Installing from tarball
+~~~~~~~~~~~~~~~~~~~~~~~
+
+In order to be able to build from the sources, you will need GNU make
+version 3.81, and a build system for the linux kernel module. Such a
+build system is often provided by some sort of kernel-headers package
+in your distribution.
+
+To compile the kernel module, the library and the binaries, unpack the
+archive, cd into the source directory, and do the following:
+
+./configure
 make
-make install
+sudo make install
 
-To install with debugging enabled:
+To install with debugging enabled, use the with-debug option with
+configure:
 
-cd bdtun
-make DEBUG=y
-make install
+./configure --with-debug
 
 The install script installs the following items:
 
-bdtun kernel module (use "modprobe bdtun" to load it)
-/usr/local/lib/libbdtun.so, shared library
-/usr/local/bin/bdtun, command line interface
-
-During make, a test client binary "testclient" is built,
-but it is not installed anywhere. You can find it in
-the bdtun directory.
-
+* bdtun kernel module (bdtun.ko)
+* bdtun header file (bdtun.h)
+* shared library (bdtun.so.x.x.x)
+* command line tool for setting up tunnels (bdtun)
+* bdtun loopback client for testing / debugging (bdtunloop)

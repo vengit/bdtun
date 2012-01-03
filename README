@@ -1,0 +1,51 @@
+What is BDTun?
+~~~~~~~~~~~~~~
+
+BDTun is a tool for writing block device drivers in userspace.
+
+See the doc directory and the bdtunloop sources for documentation on how
+to write such drivers.
+
+How does it work?
+~~~~~~~~~~~~~~~~~
+
+The kernel module sets up a character device at /dev/bdtun. The command
+line tool and/or the user space driver can communicate through this
+device.
+
+One can set up, list, show info on and remove device with commands sent
+through this device file.
+
+A create command sets up a block and a character device called a device
+pair. The device pair will have names /dev/name and /dev/name_tun, where
+name is chosen arbitrarily. The user space driver (called a client)
+opens the character device (one with the _tun at the end of it's name)
+and reads commands from it. When it completes the command, it also
+writes the result to this device.
+
+The block device end of a device pair can be used for whatever a block
+device can be: it can host partitions or be formatted raw, used as a pv
+of an LVM array and so on.
+
+What's in the package?
+~~~~~~~~~~~~~~~~~~~~~~~
+
+BDTun comes with a kernel module, a command line tool to set up tunnels,
+a header file and a library file. See INSTALL for details.
+
+How do I install it?
+~~~~~~~~~~~~~~~~~~~~
+
+Installation follows the usual configure - make - make install process.
+You need kernel headers, gnu make, and gcc to build it.
+
+In order to build from git, you have to use libtool, autotools and
+automake to set up the build environment.
+
+See INSTALL for the exact details.
+
+How do I contribute?
+~~~~~~~~~~~~~~~~~~~~
+
+If you have questions, suggestions (probably with patches), contact the
+maintainers found in the AUTHORS file.
