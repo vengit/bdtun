@@ -146,9 +146,9 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio)
         new->bio = bio;
         new->header_transferred = 0;
         
-        spin_lock_bh(&dev->bio_out_list_lock);
+        spin_lock(&dev->bio_out_list_lock);
         list_add_tail(&new->list, &dev->bio_out_list);
-        spin_unlock_bh(&dev->bio_out_list_lock);
+        spin_unlock(&dev->bio_out_list_lock);
         
         wake_up(&dev->bio_list_out_queue);
         PDEBUG("request queued\n");
@@ -267,11 +267,11 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         prepare_to_wait(&dev->bio_list_out_queue, &wait, TASK_INTERRUPTIBLE);
         
         PDEBUG("grabbing spinlock on out queue\n");
-        spin_lock_bh(&dev->bio_out_list_lock);
+        spin_lock(&dev->bio_out_list_lock);
         
         if (list_empty(&dev->bio_out_list)) {
                 PDEBUG("list empty, releasing spinlock for out queue\n");
-                spin_unlock_bh(&dev->bio_out_list_lock);
+                spin_unlock(&dev->bio_out_list_lock);
                 PDEBUG("calling schedulle\n");
                 schedule();
                 PDEBUG("awaken, finishing wait\n");
@@ -291,7 +291,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         finish_wait(&dev->bio_list_out_queue, &wait);
         PDEBUG("getting first entry\n");
         entry = list_entry(dev->bio_out_list.next, struct bdtun_bio_list_entry, list);
-        spin_unlock_bh(&dev->bio_out_list_lock);
+        spin_unlock(&dev->bio_out_list_lock);
 
         /* Validate request here to avoid queue manipulation on error */
         PDEBUG("validating request size\n");
@@ -314,13 +314,13 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         if (bio_data_dir(entry->bio) == READ || entry->header_transferred) {
                  /* We remove it from the out list, because the
                   * next write will complete it. */
-                spin_lock_bh(&dev->bio_out_list_lock);
+                spin_lock(&dev->bio_out_list_lock);
                 list_del_init(&entry->list);
-                spin_unlock_bh(&dev->bio_out_list_lock);
+                spin_unlock(&dev->bio_out_list_lock);
                 
-                spin_lock_bh(&dev->bio_in_list_lock);
+                spin_lock(&dev->bio_in_list_lock);
                 list_add_tail(&entry->list, &dev->bio_in_list);
-                spin_unlock_bh(&dev->bio_in_list_lock);
+                spin_unlock(&dev->bio_in_list_lock);
                 
                 /* Wake up the waiting writer processes */
                 wake_up(&dev->bio_list_in_queue);
@@ -337,12 +337,12 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                                 PDEBUG("error copying data to user\n");
                                 /* Put bio back to out list */
                                 entry->header_transferred = 0;
-                                spin_lock_bh(&dev->bio_in_list_lock);
+                                spin_lock(&dev->bio_in_list_lock);
                                 list_del_init(&entry->list);
-                                spin_unlock_bh(&dev->bio_in_list_lock);
-                                spin_lock_bh(&dev->bio_out_list_lock);
+                                spin_unlock(&dev->bio_in_list_lock);
+                                spin_lock(&dev->bio_out_list_lock);
                                 list_add(&entry->list, &dev->bio_out_list);
-                                spin_unlock_bh(&dev->bio_out_list_lock);
+                                spin_unlock(&dev->bio_out_list_lock);
                                 kunmap(bvec->bv_page);
                                 return -EFAULT;
                         }
@@ -375,10 +375,10 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         
         prepare_to_wait(&dev->bio_list_in_queue, &wait, TASK_INTERRUPTIBLE);
         
-        spin_lock_bh(&dev->bio_in_list_lock);
+        spin_lock(&dev->bio_in_list_lock);
         
         if (list_empty(&dev->bio_in_list)) {
-                spin_unlock_bh(&dev->bio_in_list_lock);
+                spin_unlock(&dev->bio_in_list_lock);
                 schedule();
                 finish_wait(&dev->bio_list_in_queue, &wait);
                 
@@ -393,13 +393,13 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         entry = list_entry(dev->bio_in_list.next, struct bdtun_bio_list_entry, list);
         
         list_del_init(dev->bio_in_list.next); /* We might re-queue */
-        spin_unlock_bh(&dev->bio_in_list_lock);
+        spin_unlock(&dev->bio_in_list_lock);
         
         /* Preliminary request size validation */
         if (count < 1) {
-                spin_lock_bh(&dev->bio_out_list_lock);
+                spin_lock(&dev->bio_out_list_lock);
                 list_add(&entry->list, &dev->bio_out_list);
-                spin_unlock_bh(&dev->bio_out_list_lock);
+                spin_unlock(&dev->bio_out_list_lock);
                 entry->header_transferred = 0;
                 PDEBUG("request is shorter than one, returning -EIO and re-queueing bio.\n");
                 return -EIO;
@@ -416,9 +416,9 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         /* Validate write request size */
         if ((bio_data_dir(entry->bio) == READ && count != entry->bio->bi_size + 1) ||
             (bio_data_dir(entry->bio) == WRITE && count != 1)) {
-                spin_lock_bh(&dev->bio_out_list_lock);
+                spin_lock(&dev->bio_out_list_lock);
                 list_add(&entry->list, &dev->bio_out_list);
-                spin_unlock_bh(&dev->bio_out_list_lock);
+                spin_unlock(&dev->bio_out_list_lock);
                 entry->header_transferred = 0;
                 PDEBUG("invalid request size from user returning -EIO and re-queueing bio.\n");
                 return -EIO;
@@ -433,9 +433,9 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                         if(copy_from_user(kaddr+bvec->bv_offset, buf+pos, bvec->bv_len) != 0) {
                                 PDEBUG("error copying data from user\n");
                                 kunmap(bvec->bv_page);
-                                spin_lock_bh(&dev->bio_out_list_lock);
+                                spin_lock(&dev->bio_out_list_lock);
                                 list_add(&entry->list, &dev->bio_out_list);
-                                spin_unlock_bh(&dev->bio_out_list_lock);
+                                spin_unlock(&dev->bio_out_list_lock);
                                 entry->header_transferred = 0;
                                 return -EFAULT;
                         }
