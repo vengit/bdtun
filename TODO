@@ -1,3 +1,4 @@
+* Use spin_lock instead of spin_lock_bh
 * Check / improve system immunity against sudden client deaths
 * Implement --with-debug
 * Use BDEVNAME_SIZE from fs.h

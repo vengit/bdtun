@@ -291,6 +291,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         finish_wait(&dev->bio_list_out_queue, &wait);
         PDEBUG("getting first entry\n");
         entry = list_entry(dev->bio_out_list.next, struct bdtun_bio_list_entry, list);
+        spin_unlock_bh(&dev->bio_out_list_lock);
 
         /* Validate request here to avoid queue manipulation on error */
         PDEBUG("validating request size\n");
@@ -298,13 +299,12 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 if (count != entry->bio->bi_size) {
                         PDEBUG("request size not equals bio size, returning -EIO\n");
                         entry->header_transferred = 0;
-                        spin_unlock_bh(&dev->bio_out_list_lock);
                         return -EIO;
                 }
         } else {
                 if (count != BDTUN_TXREQ_HEADER_SIZE) {
                         PDEBUG("request size not equals txreq header size (should be %lu), returning -EIO\n", BDTUN_TXREQ_HEADER_SIZE);
-                        spin_unlock_bh(&dev->bio_out_list_lock);
+                        entry->header_transferred = 0;
                         return -EIO;
                 }
         }
@@ -314,25 +314,18 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         if (bio_data_dir(entry->bio) == READ || entry->header_transferred) {
                  /* We remove it from the out list, because the
                   * next write will complete it. */
-                list_del_init(dev->bio_out_list.next);
+                spin_lock_bh(&dev->bio_out_list_lock);
+                list_del_init(&entry->list);
+                spin_unlock_bh(&dev->bio_out_list_lock);
                 
-                /* Ok, the "in" list is not empty, and we're holding the lock.
-                 * Acquire the "in" spinlock too. This is why we order this
-                 * way */
                 spin_lock_bh(&dev->bio_in_list_lock);
-                
-                /* Take the first (the oldest) bio, and insert it to the end
-                 * of the "out" waiting list */
                 list_add_tail(&entry->list, &dev->bio_in_list);
-                
                 spin_unlock_bh(&dev->bio_in_list_lock);
                 
                 /* Wake up the waiting writer processes */
                 wake_up(&dev->bio_list_in_queue);
         }
 
-        PDEBUG("releasing out queue spinlock\n");
-        spin_unlock_bh(&dev->bio_out_list_lock);
         
         /* Do actual copying, if request size is valid. */
         if (entry->header_transferred) {
@@ -342,6 +335,14 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                         
                         if(copy_to_user(buf+pos, kaddr+bvec->bv_offset, bvec->bv_len) != 0) {
                                 PDEBUG("error copying data to user\n");
+                                /* Put bio back to out list */
+                                entry->header_transferred = 0;
+                                spin_lock_bh(&dev->bio_in_list_lock);
+                                list_del_init(&entry->list);
+                                spin_unlock_bh(&dev->bio_in_list_lock);
+                                spin_lock_bh(&dev->bio_out_list_lock);
+                                list_add(&entry->list, &dev->bio_out_list);
+                                spin_unlock_bh(&dev->bio_out_list_lock);
                                 kunmap(bvec->bv_page);
                                 return -EFAULT;
                         }

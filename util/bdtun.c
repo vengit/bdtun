@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
                 
                 f = open_ctrldev();
                 
-                if ((ret = bdtun_create(f, argv[2], atoi(argv[3]), atoi(argv[4]))) < 0) {
+                if ((ret = bdtun_create(f, argv[2], atoll(argv[3]), atoll(argv[4]))) < 0) {
                         printf("Operation failed\n");
                         PDEBUG("Return value was %d\n", ret);
                         return 4;
@@ -131,7 +131,7 @@ int main(int argc, char **argv) {
                 
                 f = open_ctrldev();
                 
-                if ((ret = bdtun_resize(f, argv[2], atoi(argv[3]))) < 0) {
+                if ((ret = bdtun_resize(f, argv[2], atoll(argv[3]))) < 0) {
                         printf("Operation failed\n");
                         PDEBUG("Return value was %d\n", ret);
                         return 4;
