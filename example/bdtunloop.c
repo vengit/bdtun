@@ -58,7 +58,7 @@ int main(int argc, char *argv[]) {
                         return -1;
                 }
                 PDEBUG("Size is %lu\n", req.size);
-                printf("%lu ", req.size);
+                printf("%lu \n", req.size);
                 
                 /* Set position in backing file */
                 PDEBUG("Seeking in image\n");
