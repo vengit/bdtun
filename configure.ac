@@ -1,7 +1,7 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
 
-AC_PREREQ([2.68])
+AC_PREREQ([2.67])
 AC_INIT(bdtun, 0.0.1)
 AC_CONFIG_MACRO_DIR([m4])
 AM_INIT_AUTOMAKE
