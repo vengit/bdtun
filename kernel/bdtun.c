@@ -297,6 +297,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         if (entry->header_transferred) {
                 if (count != entry->bio->bi_size) {
                         PDEBUG("request size not equals bio size, returning -EIO\n");
+                        entry->header_transferred = 0;
                         spin_unlock_bh(&dev->bio_out_list_lock);
                         return -EIO;
                 }

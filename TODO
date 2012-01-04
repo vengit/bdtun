@@ -1,5 +1,4 @@
-* Find out stuff about blk_queue_limit and make_request
-** At least it appears in /sys/class/block/<name>/queue/hw_sector_size
+* Check / improve system immunity against sudden client deaths
 * Implement --with-debug
 * Use BDEVNAME_SIZE from fs.h
 * Find out why 8192 block size locks up the system
@@ -11,6 +10,6 @@
         * FUA (REQ_FUA)
         * DISCARD (REQ_DISCARD)
         * SECURE DISCARD (REQ_DISCARD | REQ_SECURE)
-
 * Create python binding for quick prototyping
 * Document a constantize the return values of bdtun cli
+* Find evidence that make_request receivces correctly sized block
