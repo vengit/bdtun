@@ -14,8 +14,8 @@ void usage() {
         printf(
                 "Usage bdtun <command> PARAMETERS\n"
                 "\n"
-                "bdtun create <name> <blocksize> <size in blocks>\n"
-                "bdtun resize <name> <new blocksize> <new size in blocks>\n"
+                "bdtun create <name> <blocksize> <size in bytes>\n"
+                "bdtun resize <name> <new size in bytes>\n"
                 "bdtun remove <name>\n"
                 "bdtun info <name>\n"
                 "bdtun list\n"
@@ -27,7 +27,6 @@ int open_ctrldev() {
         f = open("/dev/bdtun", O_RDWR);
         if (f < 0) {
                 printf("Could not open control device /dev/bdtun\n");
-                // TODO: return values to constants
                 exit(3);
         }
         return f;

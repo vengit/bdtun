@@ -1,7 +1,7 @@
 /*
  * Sample user space client for bdtun.
  * 
- * Simulates a 10 megabytes disk using a file (10meg.disk)
+ * It acts as a loopback device.
  */
 #include <stdio.h>
 #include <unistd.h>
@@ -35,13 +35,13 @@ int main(int argc, char *argv[]) {
         filename = argv[2];
         
         /* Open the disk image */
-        printf("Opening disk image\n");
+        PDEBUG("Opening disk image\n");
         if((img = open(filename, O_RDWR, 00644)) < 0) {
                 printf("(1) Unable to open disk image file %s\n", filename);
                 return 1;
         }
         
-        printf("Opening character device\n");
+        PDEBUG("Opening character device\n");
         if((bdtunch = open(argv[1], O_RDWR)) < 0) {
                 printf("(2) Unable to open bdtun character device file %s\n", argv[1]);
                 return 1;
@@ -57,8 +57,7 @@ int main(int argc, char *argv[]) {
                         printf("(3) Counld not get request from device: %d\n", ret);
                         return -1;
                 }
-                PDEBUG("Size is %lu\n", req.size);
-                printf("%lu \n", req.size);
+                PDEBUG("Size: %lu\n", req.size);
                 
                 /* Set position in backing file */
                 PDEBUG("Seeking in image\n");

@@ -13,3 +13,4 @@
         * SECURE DISCARD (REQ_DISCARD | REQ_SECURE)
 
 * Create python binding for quick prototyping
+* Document a constantize the return values of bdtun cli

@@ -110,6 +110,6 @@ int bdtun_list(int fd, size_t offset, size_t maxdevices, char ***buf);
 
 #ifdef __cplusplus
 }
-#endif
+#endif // __cplusplus
 
-#endif
+#endif // __BDTUN_H
