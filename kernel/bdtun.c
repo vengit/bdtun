@@ -88,9 +88,9 @@ struct bdtun {
         int ch_ucnt;
         
         /* Block device related stuff*/
-        unsigned long bd_size;
-        int bd_block_size;
-        int bd_nsectors;
+        uint64_t bd_size;
+        uint64_t bd_block_size;
+        uint64_t bd_nsectors;
         struct gendisk *bd_gd;
 };
 
@@ -485,7 +485,7 @@ static struct bdtun *bdtun_find_device(const char *name)
 /*
  *  Commands to manage devices
  */
-static int bdtun_create_k(const char *name, int block_size, uint64_t size)
+static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size)
 {
         struct bdtun *new;
         struct request_queue *queue;
