@@ -1,4 +1,3 @@
-* Find out why 8192 block size locks up the system
 * Use argparse in bdtun and bdtunloop programs
 * The following capabilities should be create parameters
   (from linux/blk_types.h)
@@ -9,4 +8,5 @@
 * Create python binding for quick prototyping
 * Document and constantize the return values of bdtun cli
 * Find evidence that make_request receivces correctly sized block
+* Find out why 8192 block size locks up the system
 * Find out how to user zero copy IO
