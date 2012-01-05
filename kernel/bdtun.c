@@ -424,6 +424,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size)
         /*
          * Set up character device and workqueue name
          */
+        PDEBUG("setting up names\n");
         strncpy(charname, name, BDEVNAME_SIZE);
         strcat(charname, "_tun");
         strncpy(qname, name, BDEVNAME_SIZE);
@@ -432,6 +433,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size)
         /*
          * Allocate device structure
          */
+        PDEBUG("allocating device sructure\n");
         new = vmalloc(sizeof (struct bdtun));
         if (new == NULL) {
                 PDEBUG("Could not allocate memory for device structure\n");
@@ -469,6 +471,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size)
         /*
          * Get a request queue.
          */
+        PDEBUG("allocating queue\n");
         queue = blk_alloc_queue(GFP_KERNEL);
 
         if (queue == NULL) {
@@ -477,39 +480,23 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size)
                 goto out_vfree;
         }
         
+        PDEBUG("setting up queue parameters\n");
         queue->queuedata = new;
         blk_queue_make_request(queue, bdtun_make_request);
         blk_queue_logical_block_size(queue, block_size);
-        blk_queue_io_min(queue, block_size);
         blk_queue_flush(queue, REQ_FLUSH | REQ_FUA);
         blk_queue_discard(queue);
         
         /*
          * Get registered.
          */
+        PDEBUG("registering blovk device\n");
         bd_major = register_blkdev(0, "bdtun");
         if (bd_major < 0) {
                 PDEBUG("unable to get major number\n");
                 error = bd_major;
                 goto out_cleanup_queue;
         }
-        
-        /*
-         * And the gendisk structure.
-         */
-        new->bd_gd = alloc_disk(BDTUN_BD_MINORS);
-        if (!new->bd_gd) {
-                PDEBUG("Unable to alloc_disk()\n");
-                error = -ENOMEM;
-                goto out_unregister_blkdev;
-        }
-        new->bd_gd->major = bd_major;
-        new->bd_gd->first_minor = 0;
-        new->bd_gd->fops = &bdtun_ops;
-        new->bd_gd->private_data = new;
-        new->bd_gd->queue = queue;
-        strcpy(new->bd_gd->disk_name, name);
-        set_capacity(new->bd_gd, new->bd_size / KERNEL_SECTOR_SIZE);
 
         /*
          * Initialize character device
@@ -518,7 +505,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size)
         error = alloc_chrdev_region(&new->ch_num, 0, 1, charname);
         if (error) {
                 PDEBUG("could not allocate character device number\n");
-                goto out_del_disk;
+                goto out_unregister_blkdev;
         }
         
         /*
@@ -546,9 +533,31 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size)
         }
         
         /*
+         * Set up the gendisk structure.
+         */
+        PDEBUG("allocating the gendisk structure\n");
+        new->bd_gd = alloc_disk(BDTUN_BD_MINORS);
+        if (!new->bd_gd) {
+                PDEBUG("Unable to alloc_disk()\n");
+                error = -ENOMEM;
+                goto out_cdev_del;
+        }
+        
+        new->bd_gd->major = bd_major;
+        new->bd_gd->first_minor = 0;
+        new->bd_gd->fops = &bdtun_ops;
+        new->bd_gd->private_data = new;
+        new->bd_gd->queue = queue;
+        strcpy(new->bd_gd->disk_name, name);
+        set_capacity(new->bd_gd, new->bd_size / KERNEL_SECTOR_SIZE);
+
+        /*
          * Add device to the list
          */
         list_add_tail(&new->list, &device_list);
+        
+        //PDEBUG("We got this far, quitting.\n");
+        //goto out_cdev_del;
         
         /*
          * Register the disk in a tasklet.
@@ -567,9 +576,6 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size)
                 cdev_del(&new->ch_dev);
         out_unregister_chrdev_region:
                 unregister_chrdev_region(new->ch_num, 1);
-        out_del_disk:
-                del_gendisk(new->bd_gd);
-                put_disk(new->bd_gd);
         out_unregister_blkdev:
                 unregister_blkdev(bd_major, "bdtun");
         out_cleanup_queue:
