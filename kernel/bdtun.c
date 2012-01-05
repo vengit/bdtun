@@ -19,6 +19,8 @@
 #include <linux/semaphore.h>
 #include <linux/workqueue.h>
 #include <linux/spinlock.h>
+#include <linux/fs.h>
+
 
 #include "../include/bdtun.h"
 
@@ -416,15 +418,15 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size)
         struct request_queue *queue;
         int error;
         int bd_major;
-        char charname[BDTUN_DEVNAME_SIZE + 5];
-        char qname[BDTUN_DEVNAME_SIZE + 3];
+        char charname[BDEVNAME_SIZE + 5];
+        char qname[BDEVNAME_SIZE + 3];
         
         /*
          * Set up character device and workqueue name
          */
-        strncpy(charname, name, BDTUN_DEVNAME_SIZE);
+        strncpy(charname, name, BDEVNAME_SIZE);
         strcat(charname, "_tun");
-        strncpy(qname, name, BDTUN_DEVNAME_SIZE);
+        strncpy(qname, name, BDEVNAME_SIZE);
         strcat(qname, "_q");
         
         /*

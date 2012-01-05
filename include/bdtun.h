@@ -21,7 +21,6 @@ extern "C" {
 /*
  * Size constants
  */
-#define BDTUN_DEVNAME_SIZE 32
 #define BDTUN_DEVNAMES 32
 #define BDTUN_RESPONSE_SIZE 1024
 #define BDTUN_BD_MINORS 64
