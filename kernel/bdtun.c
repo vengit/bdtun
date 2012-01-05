@@ -556,9 +556,6 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size)
          */
         list_add_tail(&new->list, &device_list);
         
-        //PDEBUG("We got this far, quitting.\n");
-        //goto out_cdev_del;
-        
         /*
          * Register the disk in a tasklet.
          */
