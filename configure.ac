@@ -7,6 +7,15 @@ AC_CONFIG_MACRO_DIR([m4])
 AM_INIT_AUTOMAKE
 AM_CONFIG_HEADER(include/config.h)
 
+# CFLAGS="-Wall -O2 -DBDTUN_DEBUG"
+AC_ARG_ENABLE(debug,[  --enable-debug          Compile with debugging enabled ],)
+
+if test "$enable_debug" == "yes"; then
+    CFLAGS="-Wall -g -O -DBDTUN_DEBUG"
+else
+    CFLAGS="-Wall -O2"
+fi
+
 # Checks for programs.
 AC_PROG_CC
 AC_PROG_LIBTOOL
@@ -21,7 +30,6 @@ AC_TYPE_SIZE_T
 AC_TYPE_SSIZE_T
 AC_TYPE_UINT64_T
 
-
 # Checks for library functions.
 AC_FUNC_REALLOC
 
@@ -31,6 +39,6 @@ AC_FUNC_REALLOC
 #                   lib
 #                   util])
 
-AC_CONFIG_FILES([Makefile include/Makefile lib/Makefile util/Makefile example/Makefile])
+AC_CONFIG_FILES([Makefile include/Makefile lib/Makefile util/Makefile example/Makefile kernel/Makefile])
 
 AC_OUTPUT

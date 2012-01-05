@@ -45,9 +45,6 @@ struct bdtun_work {
 struct bdtun_bio_list_entry {
         struct list_head list;
         struct bio *bio;
-        spinlock_t lock;
-        int header_transferred;
-        int fully_transferred;
 };
 
 /*
@@ -73,12 +70,7 @@ struct bdtun {
         
         struct list_head bio_list;
         wait_queue_head_t reader_queue;
-        wait_queue_head_t writer_queue;
         
-        /*
-         * Acquire locks in this order:
-         * first out, then in, then sem
-         */
         spinlock_t bio_list_lock;
         spinlock_t lock;
         int removing;
@@ -144,9 +136,6 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio)
         }
         
         new->bio = bio;
-        new->header_transferred = 0;
-        new->fully_transferred  = 0;
-        spin_lock_init(&new->lock);
         
         spin_lock(&dev->bio_list_lock);
         list_add_tail(&new->list, &dev->bio_list);
@@ -248,73 +237,6 @@ static int bdtunch_release(struct inode *inode, struct file *filp)
         return 0;
 }
 
-static inline int bdtun_send_request_header(size_t count,
-struct bdtun_bio_list_entry *entry, struct bdtun_txreq **req, char *buf)
-{
-        if (count != BDTUN_TXREQ_HEADER_SIZE) {
-                PDEBUG(
-                    "request size not equals txreq header size "
-                    "(should be %lu), returning -EIO\n",
-                    BDTUN_TXREQ_HEADER_SIZE);
-                spin_lock(&entry->lock);
-                entry->header_transferred = 0;
-                entry->fully_transferred = 0;
-                spin_unlock(&entry->lock);
-                return 0;
-        }
-        /* Transfer command header */
-        *req = (struct bdtun_txreq *)buf;
-        (*req)->flags  = entry->bio->bi_rw;
-        (*req)->offset = entry->bio->bi_sector * KERNEL_SECTOR_SIZE;
-        (*req)->size   = entry->bio->bi_size;
-        
-        spin_lock(&entry->lock);
-        entry->header_transferred = 1;
-        spin_unlock(&entry->lock);
-        
-        return 1;
-}
-
-static inline int bdtun_send_request_data(size_t count,
-struct bdtun_bio_list_entry *entry, struct bdtun_txreq **req, char *buf)
-{
-        unsigned long pos = 0;
-        struct bio_vec *bvec;
-        int i;
-        
-        if (count != entry->bio->bi_size) {
-                /* Check if this is an accidental header read */
-                if (count == BDTUN_TXREQ_HEADER_SIZE) {
-                        return bdtun_send_request_header(count, entry, req, buf);
-                }
-                PDEBUG("request size not equals bio size, returning -EIO\n");
-                spin_lock(&entry->lock);
-                entry->header_transferred = 0;
-                entry->fully_transferred = 0;
-                spin_unlock(&entry->lock);
-                return 0;
-        }
-        /* Transfer bio data. */
-        bio_for_each_segment(bvec, entry->bio, i) {
-                void *kaddr = kmap(bvec->bv_page);
-                
-                if(copy_to_user(buf+pos, kaddr+bvec->bv_offset, bvec->bv_len) != 0) {
-                        PDEBUG("error copying data to user\n");
-                        /* Put bio back to out list */
-                        spin_lock(&entry->lock);
-                        entry->header_transferred = 0;
-                        entry->fully_transferred = 0;
-                        spin_unlock(&entry->lock);
-                        kunmap(bvec->bv_page);
-                        return 0;
-                }
-                kunmap(bvec->bv_page);
-                pos += bvec->bv_len;
-        }
-        
-        return 1;
-}
-
 /*
  * Takes a bio, and sends it to the char device.
  * We don't know if the bio will complete at this point.
@@ -325,7 +247,10 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         struct bdtun *dev = filp->private_data;
         struct bdtun_bio_list_entry *entry;
         struct bdtun_txreq *req;
+        unsigned long pos = 0;
+        struct bio_vec *bvec;
         DEFINE_WAIT(wait);
+        int i;
         
         out_list_is_empty:
         
@@ -359,30 +284,31 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
         spin_unlock(&dev->bio_list_lock);
 
-        if (bio_data_dir(entry->bio) == READ) {
-                /* READ REQUEST */
-                
-                if (!bdtun_send_request_header(count, entry, &req, buf)) {
-                        return -EIO;
+        if (count == BDTUN_TXREQ_HEADER_SIZE) {
+                req = (struct bdtun_txreq *)buf;
+                req->flags  = entry->bio->bi_rw;
+                req->offset = entry->bio->bi_sector * KERNEL_SECTOR_SIZE;
+                req->size   = entry->bio->bi_size;
+        } else if (bio_data_dir(entry->bio) == WRITE &&
+                   count == entry->bio->bi_size)
+        {
+                /* Transfer bio data. */
+                bio_for_each_segment(bvec, entry->bio, i) {
+                        void *kaddr = kmap(bvec->bv_page);
+                        
+                        if(copy_to_user(buf+pos, kaddr+bvec->bv_offset,
+                                        bvec->bv_len) != 0)
+                        {
+                                PDEBUG("error copying data to user\n");
+                                kunmap(bvec->bv_page);
+                                return -EIO;
+                        }
+                        kunmap(bvec->bv_page);
+                        pos += bvec->bv_len;
                 }
-                spin_lock(&entry->lock);
-                entry->fully_transferred = 1;
-                spin_unlock(&entry->lock);
-
-                                
-                wake_up(&dev->writer_queue);
         } else {
-                /* WRITE REQUEST */
-                if (entry->header_transferred) {
-                        if (!bdtun_send_request_data(count, entry, &req, buf)) {
-                                return -EIO;
-                        }
-                        wake_up(&dev->writer_queue);
-                } else {
-                        if (!bdtun_send_request_header(count, entry, &req, buf)) {
-                                return -EIO;
-                        }
-                }
+                PDEBUG("request size is invalid, returning -EIO\n");
+                return -EIO;
         }
 
         return count;
@@ -394,61 +320,28 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         struct bdtun_bio_list_entry *entry;
         struct bio_vec *bvec;
         unsigned long pos = 0;
-        DEFINE_WAIT(wait);
         int i;
 
-        waiting:
-        
-        /* Wait on empty queue */
-        prepare_to_wait(&dev->writer_queue, &wait, TASK_INTERRUPTIBLE);
-        
         spin_lock(&dev->bio_list_lock);
-
         if (list_empty(&dev->bio_list)) {
                 spin_unlock(&dev->bio_list_lock);
-                schedule();
-                finish_wait(&dev->writer_queue, &wait);
-                
-                if (signal_pending(current)) {
-                        return -ERESTARTSYS;
-                }
-                
-                goto waiting;
+                PDEBUG("got write on empty list, returning -EIO");
+                return -EIO;
         }
-        finish_wait(&dev->writer_queue, &wait);
         entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
         spin_unlock(&dev->bio_list_lock);
 
-        /* Wait on bio that hasn't been fully transferred */
-        prepare_to_wait(&dev->writer_queue, &wait, TASK_INTERRUPTIBLE);
-        
-        spin_lock(&entry->lock);
-        
-        if (!entry->fully_transferred) {
-                spin_unlock(&entry->lock);
-                schedule();
-                finish_wait(&dev->writer_queue, &wait);
-                
-                if (signal_pending(current)) {
-                        return -ERESTARTSYS;
-                }
-                
-                goto waiting;
-        }
-        finish_wait(&dev->writer_queue, &wait);
-        spin_unlock(&entry->lock);
-
-        /* Preliminary request size validation */
-        if (count < 1) {
-                PDEBUG("request is shorter than one, returning -EIO and resetting bio.\n");
-                spin_lock(&entry->lock);
-                entry->header_transferred = 0;
-                entry->fully_transferred = 0;
-                spin_unlock(&entry->lock);
+        /* Validate request size */
+        if (count < 1 ||
+            (bio_data_dir(entry->bio) == READ && count != entry->bio->bi_size + 1) ||
+            (bio_data_dir(entry->bio) == WRITE && count != 1)) {
+                PDEBUG("invalid request size from user returning -EIO and resetting bio.\n");
                 return -EIO;
         }
         
-        /* Read completion byte */
+        /* Read completion byte
+         * Remark: we accept arbitrary sized request in this case.
+         * This is intentional to keep code a bit simpler */
         if (buf[0]) {
                 PDEBUG("user process explicitly signaled failure, failing bio.\n");
                 spin_lock(&dev->bio_list_lock);
@@ -457,17 +350,6 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                 bio_endio(entry->bio, -1);
                 kfree(entry);
                 return 0;
-        }
-        
-        /* Validate write request size */
-        if ((bio_data_dir(entry->bio) == READ && count != entry->bio->bi_size + 1) ||
-            (bio_data_dir(entry->bio) == WRITE && count != 1)) {
-                PDEBUG("invalid request size from user returning -EIO and resetting bio.\n");
-                spin_lock(&entry->lock);
-                entry->header_transferred = 0;
-                entry->fully_transferred = 0;
-                spin_unlock(&entry->lock);
-                return -EIO;
         }
         
         buf++;
@@ -479,10 +361,6 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                         if(copy_from_user(kaddr+bvec->bv_offset, buf+pos, bvec->bv_len) != 0) {
                                 PDEBUG("error copying data from user\n");
                                 kunmap(bvec->bv_page);
-                                spin_lock(&entry->lock);
-                                entry->header_transferred = 0;
-                                entry->fully_transferred = 0;
-                                spin_unlock(&entry->lock);
                                 return -EFAULT;
                         }
                         kunmap(bvec->bv_page);
@@ -577,9 +455,8 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size)
         new->ch_ucnt  = 0;
         
         /*
-         * Wait queues
+         * Wait queue
          */
-        init_waitqueue_head(&new->writer_queue);
         init_waitqueue_head(&new->reader_queue);
         
         /*

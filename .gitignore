@@ -30,6 +30,7 @@ config.log
 config.status
 
 Makefile.in
+!kernel/Makefile.in
 example/Makefile.in
 include/Makefile.in
 lib/Makefile.in

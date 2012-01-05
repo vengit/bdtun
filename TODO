@@ -1,4 +1,3 @@
-* Implement --with-debug
 * Use BDEVNAME_SIZE from fs.h
 * Find out why 8192 block size locks up the system
 * Find out how to user zero copy IO
@@ -10,5 +9,5 @@
         * DISCARD (REQ_DISCARD)
         * SECURE DISCARD (REQ_DISCARD | REQ_SECURE)
 * Create python binding for quick prototyping
-* Document a constantize the return values of bdtun cli
+* Document and constantize the return values of bdtun cli
 * Find evidence that make_request receivces correctly sized block
