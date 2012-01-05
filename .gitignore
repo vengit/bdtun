@@ -7,6 +7,8 @@
 *.disk
 *.la
 *.lo
+*.tar.gz
+*.cache
 
 Module.symvers
 modules.order
@@ -14,7 +16,6 @@ modules.order
 bdtunloop
 bdtun
 
-autom4te.cache
 aclocal.m4
 
 configure

@@ -20,6 +20,7 @@ uninstall:
 	depmod -a
 
 distclean: clean
+	rm -f Makefile
 
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
