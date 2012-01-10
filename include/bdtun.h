@@ -2,6 +2,7 @@
 #define __BDTUN_H
 
 #include <linux/blk_types.h>
+#include <linux/fs.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,6 +50,11 @@ struct bdtun_txreq {
 
 #define BDTUN_TXREQ_HEADER_SIZE sizeof(struct bdtun_txreq)-sizeof(char *)
 
+#define BDTUN_FLUSH   1
+#define BDTUN_FUA     2
+#define BDTUN_DISCARD 4
+#define BDTUN_SECURE  8
+
 /*
  * Information on a device pair
  */
@@ -59,6 +65,7 @@ struct bdtun_info {
         int bd_minor;
         int ch_major;
         int ch_minor;
+        int capabilities;
 };
 
 struct bdtun_ctrl_command {
@@ -67,6 +74,7 @@ struct bdtun_ctrl_command {
                 struct {
                         uint64_t blocksize;
                         uint64_t size;
+                        int capabilities;
                         char name[32];
                 } create;
                 struct {
@@ -97,7 +105,7 @@ int bdtun_read_request(int fd, struct bdtun_txreq *rq);
 
 int bdtun_complete_request(int fd, struct bdtun_txreq *req);
 
-int bdtun_create(int fd, const char *name, uint64_t blocksize, uint64_t size);
+int bdtun_create(int fd, const char *name, uint64_t blocksize, uint64_t size, int capabilities);
 
 int bdtun_resize(int fd, const char *name, uint64_t size);
 

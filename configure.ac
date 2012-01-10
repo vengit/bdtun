@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.67])
-AC_INIT(bdtun, 0.0.1)
+AC_INIT([bdtun], [0.0.1], [Fábián Tamás László <tamas.fabian@vengit.com>])
 AC_CONFIG_MACRO_DIR([m4])
 AM_INIT_AUTOMAKE
 AM_CONFIG_HEADER(include/config.h)
@@ -23,7 +23,7 @@ AC_PROG_LIBTOOL
 # Checks for libraries.
 
 # Checks for header files.
-AC_CHECK_HEADERS([fcntl.h inttypes.h stdlib.h unistd.h string.h])
+AC_CHECK_HEADERS([fcntl.h inttypes.h stdlib.h unistd.h string.h argp.h])
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_TYPE_SIZE_T

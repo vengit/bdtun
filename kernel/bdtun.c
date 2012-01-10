@@ -6,7 +6,6 @@
 #include <linux/moduleparam.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
-#include <linux/fs.h>
 #include <linux/errno.h>
 #include <linux/types.h>
 #include <linux/vmalloc.h>
@@ -20,7 +19,6 @@
 #include <linux/workqueue.h>
 #include <linux/spinlock.h>
 #include <linux/fs.h>
-
 
 #include "../include/bdtun.h"
 
@@ -81,7 +79,7 @@ struct bdtun {
         int ucnt;
         int ch_ucnt;
         
-        /* Block device related stuff*/
+        /* Block device related stuff */
         uint64_t bd_size;
         uint64_t bd_block_size;
         uint64_t bd_nsectors;
@@ -412,12 +410,13 @@ static struct bdtun *bdtun_find_device(const char *name)
 /*
  *  Commands to manage devices
  */
-static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size)
+static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, int capabilities)
 {
         struct bdtun *new;
         struct request_queue *queue;
         int error;
         int bd_major;
+        int qflags = 0;
         char charname[BDEVNAME_SIZE + 5];
         char qname[BDEVNAME_SIZE + 3];
         
@@ -484,8 +483,21 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size)
         queue->queuedata = new;
         blk_queue_make_request(queue, bdtun_make_request);
         blk_queue_logical_block_size(queue, block_size);
-        blk_queue_flush(queue, REQ_FLUSH | REQ_FUA);
-        blk_queue_discard(queue);
+        if (capabilities & BDTUN_FLUSH) {
+                qflags |= REQ_FLUSH;
+        }
+        if (capabilities & BDTUN_FUA) {
+                qflags |= REQ_FUA;
+        }
+        if (qflags) {
+                blk_queue_flush(queue, qflags);
+        }
+        if (capabilities & BDTUN_DISCARD) {
+                blk_queue_discard(queue);
+        }
+        if (capabilities & BDTUN_SECURE) {
+                blk_queue_secdiscard(queue);
+        }
         
         /*
          * Get registered.
@@ -780,7 +792,7 @@ static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff
                 if (count < BDTUN_COMM_CREATE_SIZE) {
                         return -EIO;
                 }
-                ret = bdtun_create_k(c->create.name, c->create.blocksize, c->create.size);
+                ret = bdtun_create_k(c->create.name, c->create.blocksize, c->create.size, c->create.capabilities);
                 
                 if (ret < 0) {
                         return ret;

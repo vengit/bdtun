@@ -91,13 +91,14 @@ int bdtun_fail_request(int fd, struct bdtun_txreq *req)
 /*
  * Create a device pair with the given size and name
  */
-int bdtun_create(int fd, const char *name, uint64_t blocksize, uint64_t size) {
+int bdtun_create(int fd, const char *name, uint64_t blocksize, uint64_t size, int capabilities) {
         int ret;
         struct bdtun_ctrl_command c;
         
         c.command = BDTUN_COMM_CREATE;
         c.create.blocksize = blocksize;
         c.create.size = size;
+        c.create.capabilities = capabilities;
         strncpy(c.create.name, name, 32);
         
         ret = write(fd, &c, BDTUN_COMM_CREATE_SIZE);
