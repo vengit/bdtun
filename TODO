@@ -1,3 +1,6 @@
-* Handle more than 32 devices with bdtun list
-* Fix bdtun --usage
-* Find out how to user zero copy IO
+* bdtun: Handle more than 32 devices with bdtun list
+* bdtun: Fix bdtun --usage
+* kernel: Find out how to user zero copy IO
+* kernel: Move bio fail/flushing into kernel
+* kernel: Implement self-destructing tunnels in kernel
+* bdtunloop: Use mmap for zeroing 
