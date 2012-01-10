@@ -1,4 +1,3 @@
 * Handle more than 32 devices with bdtun list
 * Fix bdtun --usage
-* Create python binding for quick prototyping
 * Find out how to user zero copy IO

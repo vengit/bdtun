@@ -27,7 +27,6 @@ static struct argp_option options[] = {
 
 {"block-size", 'b', "BLOCKSIZE", 0, "block size in bytes"},
 {"create-tun", 'c', 0,           0, "create the BDTun device pair"},
-{"force",      'f', 0,           0, "force operation"},
 {"create-img", 'i', 0,           0, "create / truncate disk image"},
 {"size",       's', "SIZE",      0, "device size in bytes"},
 {"zero",       'z', 0,           0, "fill disk with zeroes"},
@@ -44,7 +43,6 @@ struct arguments {
         uint64_t size;
         uint64_t blocksize;
         int zero;
-        int force;
 };
 
 static int parse_opt(int key, char *arg, struct argp_state *state)
@@ -90,9 +88,6 @@ static int parse_opt(int key, char *arg, struct argp_state *state)
         case 'z':
                 args->zero = 1;
                 break;
-        case 'f':
-                args->force = 1;
-                break;
         case ARGP_KEY_ARG:
                 if (state->arg_num > 1) {
                         argp_error(state, "too many arguments");
@@ -137,6 +132,8 @@ int main(int argc, char *argv[])
         int ctrldev;
         int img;
         int ret;
+        uint64_t i;
+        char *buf;
                 
         argp_parse(&argp, argc, argv, 0, 0, &args);
         
@@ -204,13 +201,15 @@ int main(int argc, char *argv[])
                         printf("Unable to stat image %s\n", args.filename);
                         return 1;
                 }
-                if(stat.st_size % args.blocksize) {
+                if (args.size == 0) {
+                        args.size = stat.st_size;
+                }
+                if(args.size % args.blocksize) {
                         printf("size of %" PRIu64 " is not a multiple of "
                                "blocksize of %" PRIu64 "\n",
                                stat.st_size, args.blocksize);
                         return 1;
                 }
-                args.size = stat.st_size;
         }
         assert(args.size);
         assert(img);
@@ -230,7 +229,18 @@ int main(int argc, char *argv[])
         }
         
         close(ctrldev);
-        
+
+        if (args.zero) {
+                buf = malloc(args.blocksize);
+                for (i = 0; i < args.size / args.blocksize; i++) {
+                        if(write(img, buf, args.blocksize) != args.blocksize) {
+                                printf("Could not fill file %s with zeroes\n", args.filename);
+                                return 1;
+                        }
+                }
+                free(buf);
+        }
+
         /* Start "event loop" */
         PDEBUG("Starting event loop\n");
         for ever {
