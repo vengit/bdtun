@@ -231,7 +231,12 @@ int main(int argc, char *argv[])
         close(ctrldev);
 
         if (args.zero) {
+                printf("Writing zeros to image...\n");
                 buf = malloc(args.blocksize);
+                if (!buf) {
+                        printf("Could not allocate memory.\n");
+                        return 1;
+                }
                 for (i = 0; i < args.size / args.blocksize; i++) {
                         if(write(img, buf, args.blocksize) != args.blocksize) {
                                 printf("Could not fill file %s with zeroes\n", args.filename);
@@ -239,6 +244,7 @@ int main(int argc, char *argv[])
                         }
                 }
                 free(buf);
+                printf("Done. Starting operation.\n");
         }
 
         /* Start "event loop" */

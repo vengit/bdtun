@@ -224,9 +224,10 @@ int open_ctrldev() {
 }
 
 int main(int argc, char **argv) {
-        int f, ret = 0, i, capabilities;
+        int f, ret = 0, i, capabilities, dev;
         struct bdtun_info info;
         char **names;
+        char devname[42] = "/dev/";
 
         struct arguments args = {0};
         
@@ -239,6 +240,7 @@ int main(int argc, char **argv) {
         
         switch (args.command) {
         case CREATE:
+                capabilities = 0;
                 if (args.req_flush) {
                         capabilities |= BDTUN_FLUSH;
                 }
@@ -256,6 +258,17 @@ int main(int argc, char **argv) {
         case RESIZE:
                 break;
         case REMOVE:
+                if (args.flush_with_eio) {
+                        strcat(devname+5, args.name);
+                        strcat(devname+5+strlen(args.name), "_tun");
+                        dev = open(devname, O_RDWR);
+                        if (!dev) {
+                                printf("Could not open tunnel device %s", devname);
+                                ret = 1;
+                                break;
+                        }
+                        while(write(dev, "\0x01", 1) > 0);
+                }
                 ret = bdtun_remove(f, args.name);
                 break;
         case LIST:
@@ -297,9 +310,10 @@ int main(int argc, char **argv) {
         close(f);
         
         if (ret < 0) {
-                printf("Operation failed");
+                printf("Operation failed\n");
+                return 1;
         }
         
-        return -ret;
+        return 0;
 
 }
