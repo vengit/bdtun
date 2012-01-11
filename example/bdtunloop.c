@@ -93,13 +93,13 @@ static int parse_opt(int key, char *arg, struct argp_state *state)
                         argp_error(state, "too many arguments");
                 }
                 if (state->arg_num == 0) {
-                        args->filename = arg;
-                }
-                if (state->arg_num == 1) {
                         if (strlen(arg) >= 32) {
                                 argp_error(state, "tunnel name must be shorter than %d", 32);
                         }
                         args->tunnel = arg;
+                }
+                if (state->arg_num == 1) {
+                        args->filename = arg;
                 }
                 break;
         case ARGP_KEY_SUCCESS:
