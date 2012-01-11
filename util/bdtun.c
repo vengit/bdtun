@@ -253,7 +253,7 @@ int main(int argc, char **argv) {
                 if (args.req_secure) {
                         capabilities |= BDTUN_SECURE;
                 }
-                ret = bdtun_create(f, args.name, args.size, args.blocksize, capabilities);
+                ret = bdtun_create(f, args.name, args.blocksize, args.size, capabilities);
                 break;
         case RESIZE:
                 break;
