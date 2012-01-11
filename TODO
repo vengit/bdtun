@@ -1,3 +1,4 @@
+* bdtun remove -f doesn't really work. Find out how to pull a block device.
 * bdtun: Handle more than 32 devices with bdtun list
 * bdtun: Fix bdtun --usage
 * kernel: Find out how to user zero copy IO

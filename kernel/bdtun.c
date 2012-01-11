@@ -332,16 +332,16 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         spin_unlock(&dev->bio_list_lock);
 
         /* Validate request size */
+        PDEBUG("Count: %d, data dir: %lu, buf[0]: %d, bio->bi_size+1: %d", count, bio_data_dir(entry->bio), buf[0], entry->bio->bi_size+1);
         if (count < 1 ||
-            (bio_data_dir(entry->bio) == READ && count != entry->bio->bi_size + 1) ||
+            (bio_data_dir(entry->bio) == READ && !buf[0] && count != entry->bio->bi_size + 1) ||
+            (bio_data_dir(entry->bio) == READ &&  buf[0] && count != 1) ||
             (bio_data_dir(entry->bio) == WRITE && count != 1)) {
                 PDEBUG("invalid request size from user returning -EIO and resetting bio.\n");
                 return -EIO;
         }
         
-        /* Read completion byte
-         * Remark: we accept arbitrary sized request in this case.
-         * This is intentional to keep code a bit simpler */
+        /* Read completion byte */
         if (buf[0]) {
                 PDEBUG("user process explicitly signaled failure, failing bio.\n");
                 spin_lock(&dev->bio_list_lock);

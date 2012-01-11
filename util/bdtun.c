@@ -146,6 +146,12 @@ static int parse_opt(int key, char *arg, struct argp_state *state)
                 }
                 args->req_secure = 1;
                 break;
+        case KEY_FWEIO:
+                if (args->command != REMOVE) {
+                        argp_error(state, "--flush-with-eio is only for remove");
+                }
+                args->flush_with_eio = 1;
+                break;
         case ARGP_KEY_NO_ARGS:
                 argp_error(state, "there must be at least one argument");
                 break;
@@ -267,7 +273,8 @@ int main(int argc, char **argv) {
                                 ret = 1;
                                 break;
                         }
-                        while(write(dev, "\0x01", 1) > 0);
+                        while(write(dev, "\x001", 1) > 0);
+                        close(dev);
                 }
                 ret = bdtun_remove(f, args.name);
                 break;
