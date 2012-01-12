@@ -165,20 +165,13 @@ static int bdtun_open(struct block_device *bdev, fmode_t mode)
                 spin_unlock(&dev->lock);
                 return -ENOENT;
         }
-        //dev->ucnt++;
-        PDEBUG("device counter is %d for %s\n", dev->ucnt, dev->bd_gd->disk_name);
         spin_unlock(&dev->lock);
         return 0;
 }
 
 static int bdtun_release(struct gendisk *gd, fmode_t mode)
 {
-        struct bdtun *dev = gd->queue->queuedata;
         PDEBUG("bdtun_release()\n");
-        spin_lock(&dev->lock);
-        //dev->ucnt--;
-        PDEBUG("device counter is %d for %s\n", dev->ucnt, dev->bd_gd->disk_name);
-        spin_unlock(&dev->lock);
         return 0;
 }
 
@@ -452,7 +445,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
          * Determine device size
          */
         new->bd_block_size = block_size;
-        new->bd_nsectors   = size / block_size; // Incoming size is just an approximate.
+        new->bd_nsectors   = size / block_size;
         new->bd_size       = new->bd_nsectors * block_size;
         
         /*
@@ -612,7 +605,6 @@ static int bdtun_resize_k(const char *name, uint64_t size)
         
         if (dev == NULL) {
                 PDEBUG("error removing '%s': no such device\n", name);
-                // TODO set_capacity(old_capacity) here
                 return -ENOENT;
         }
         
@@ -671,13 +663,9 @@ static int bdtun_remove_k(const char *name)
         dev->removing = 1;
         spin_unlock(&dev->lock);
         
-        //set_capacity(dev->bd_gd, 0);
-        //ret = revalidate_disk(dev->bd_gd);
-        //PDEBUG("revalidate_disk says: %d", ret);
-        
         while (!list_empty(&dev->bio_list)) {
                 entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
-                bio_endio(entry->bio, -EIO); // TODO: is this the right error code here?
+                bio_endio(entry->bio, -EIO);
                 list_del(dev->bio_list.next);
                 kfree(entry);
         }
