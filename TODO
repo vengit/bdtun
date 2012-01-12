@@ -1,3 +1,2 @@
 * bdtun: Handle more than 32 devices with bdtun list
-* bdtunloop: Use mmap
 * kernel: Find out how to user zero copy IO

@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <inttypes.h>
 #include <argp.h>
+#include <sys/mman.h>
 #include <assert.h>
 
 #include "bdtun.h"
@@ -132,8 +133,7 @@ int main(int argc, char *argv[])
         int ctrldev;
         int img;
         int ret;
-        uint64_t i;
-        char *buf;
+        char *imgmap;
                 
         argp_parse(&argp, argc, argv, 0, 0, &args);
         
@@ -146,7 +146,7 @@ int main(int argc, char *argv[])
                 printf("Could not open control device /dev/bdtun\n");
                 return 1;
         }
-        
+
         if (!args.create_tun) {
                 ret = bdtun_info(ctrldev, args.tunnel, &info);
                 if (ret) {
@@ -203,6 +203,10 @@ int main(int argc, char *argv[])
                 }
                 if (args.size == 0) {
                         args.size = stat.st_size;
+                } else if (args.size != stat.st_size) {
+                        printf("Tunnel size of %" PRIu64 " does not match file size of %zd\n", args.size, stat.st_size);
+                        return 1;
+                        
                 }
                 if(args.size % args.blocksize) {
                         printf("size of %" PRIu64 " is not a multiple of "
@@ -229,22 +233,24 @@ int main(int argc, char *argv[])
         }
         
         close(ctrldev);
+        
+        imgmap = mmap(0, args.size, PROT_READ | PROT_WRITE, MAP_SHARED, img, 0);
+        
+        if (!imgmap) {
+                printf("Could not mmap image\n");
+                close(img);
+                if (args.create_tun) {
+                        ret = bdtun_remove(ctrldev, args.tunnel);
+                        if (ret < 0) {
+                                printf("Additionally, could not remove just-created tunnel %s\n", args.tunnel);
+                        }
+                }
+                return 1;
+        }
 
         if (args.zero) {
                 printf("Writing zeros to image...\n");
-                buf = malloc(args.blocksize);
-                if (!buf) {
-                        printf("Could not allocate memory.\n");
-                        return 1;
-                }
-                for (i = 0; i < args.size / args.blocksize; i++) {
-                        if(write(img, buf, args.blocksize) != args.blocksize) {
-                                printf("Could not fill file %s with zeroes\n", args.filename);
-                                return 1;
-                        }
-                }
-                free(buf);
-                printf("Done. Starting operation.\n");
+                bzero(imgmap, args.size);
         }
 
         /* Start "event loop" */
@@ -259,26 +265,13 @@ int main(int argc, char *argv[])
                 }
                 PDEBUG("Size: %lu\n", req.size);
                 
-                /* Set position in backing file */
-                PDEBUG("Seeking in image\n");
-                if(lseek(img, req.offset, SEEK_SET) != req.offset) {
-                        printf("(4) Unable to set disk image position.\n");
-                        return 1;
-                }
-
                 /* Read / write backing file */
                 if (req.flags & REQ_WRITE) {
                         PDEBUG("Writing to disk image\n");
-                        if((ret = write(img, req.buf, req.size)) != req.size) {
-                                printf("(5) Unable to write disk image: %d\n", ret);
-                                return 1;
-                        }
+                        memcpy(imgmap + req.offset, req.buf, req.size);
                 } else {
                         PDEBUG("Reading from disk image\n");
-                        if((ret = read(img, req.buf, req.size)) != req.size) {
-                                printf("(6) Unable to read from disk image: %d\n", ret);
-                                return 1;
-                        }
+                        memcpy(req.buf, imgmap + req.offset, req.size);
                 }
                 
                 /* Complete request */
