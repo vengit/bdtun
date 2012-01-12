@@ -200,7 +200,7 @@ int open_ctrldev() {
 }
 
 int main(int argc, char **argv) {
-        int f, ret = 0, i, capabilities;
+        int f, ret = 0, i, capabilities, first, off;
         struct bdtun_info info;
         char **names;
 
@@ -233,20 +233,27 @@ int main(int argc, char **argv) {
                 ret = bdtun_remove(f, args.name);
                 break;
         case LIST:
-                if ((ret = bdtun_list(f, 0, 32, &names)) < 0) {
-                        printf("Operation failed\n");
-                        break;
-                }
-                if (names[0] == NULL) {
-                        printf("No tunnels found.\n");
-                        break;
-                }
-                printf("The following tunnels were found:\n\n");
-                i = 0;
-                while (names[i] != NULL) {
-                        printf("%s\n", names[i]);
-                        i++;
-                }
+                first = 1;
+                off = 0;
+                do {
+                        if ((ret = bdtun_list(f, off, 32, &names)) < 0) {
+                                printf("Operation failed\n");
+                                break;
+                        }
+                        if (first) {
+                                if (names[0] == NULL) {
+                                        printf("No tunnels found.\n");
+                                } else {
+                                        printf("The following tunnels were found:\n\n");
+                                }
+                                first = 0;
+                        }
+                        for (i = 0; i < ret; i++) {
+                                printf("%s\n", names[i]);
+                                i++; off++;
+                        }
+                } while (ret);
+                
                 break;
         case INFO:
                 if ((ret = bdtun_info(f, args.name, &info)) < 0) {

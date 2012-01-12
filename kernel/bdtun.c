@@ -703,7 +703,7 @@ static int bdtun_list_k(
         struct list_head *ptr;
         struct bdtun *entry;
         int i, bufpos, len;
-        
+
         i = 0;
         bufpos = 0;
         list_for_each(ptr, &device_list) {
@@ -711,7 +711,7 @@ static int bdtun_list_k(
                         offset--;
                         continue;
                 }
-                if (i >= maxdevices || i >= maxdevices_internal) {
+                if (i > maxdevices || i > maxdevices_internal) {
                         break;
                 }
                 entry = list_entry(ptr, struct bdtun, list);

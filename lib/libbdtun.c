@@ -209,7 +209,6 @@ int bdtun_list(int fd, size_t offset, size_t maxdevices, char ***names)
 
         /* There is no names in the buffer, we're done. */
         if (ret == 0) {
-                name_pbuf[0] = NULL;
                 return 0;
         }
 
@@ -218,11 +217,11 @@ int bdtun_list(int fd, size_t offset, size_t maxdevices, char ***names)
         name_pbuf[0] = buf;
         j = 1;
         for (i = 1; i < ret; i++) {
-                if (buf[i] == 0) {
+                if (buf[i] == 0 && i + 1 < ret) {
                         name_pbuf[j] = buf + i + 1;
                         j++;
                 }
         }
         
-        return 0;
+        return j;
 }

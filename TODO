@@ -1,2 +1,2 @@
-* bdtun: Handle more than 32 devices with bdtun list
+* BUG: remove fails when many devices are added
 * kernel: Find out how to user zero copy IO
