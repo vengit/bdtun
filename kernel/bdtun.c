@@ -126,8 +126,17 @@ static void bdtun_do_add_disk(struct work_struct *work)
 static int bdtun_make_request(struct request_queue *q, struct bio *bio)
 {
         struct bdtun *dev = q->queuedata;
+        struct bdtun_bio_list_entry *new;
         
-        struct bdtun_bio_list_entry *new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_ATOMIC);
+        spin_lock(&dev->lock);
+        if (dev->removing) {
+                spin_unlock(&dev->lock);
+                bio_endio(bio, -EIO);
+                return 0;
+        }
+        spin_unlock(&dev->lock);
+        
+        new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_ATOMIC);
         
         PDEBUG("make_request called\n");
         
@@ -156,7 +165,7 @@ static int bdtun_open(struct block_device *bdev, fmode_t mode)
                 spin_unlock(&dev->lock);
                 return -ENOENT;
         }
-        dev->ucnt++;
+        //dev->ucnt++;
         PDEBUG("device counter is %d for %s\n", dev->ucnt, dev->bd_gd->disk_name);
         spin_unlock(&dev->lock);
         return 0;
@@ -167,7 +176,7 @@ static int bdtun_release(struct gendisk *gd, fmode_t mode)
         struct bdtun *dev = gd->queue->queuedata;
         PDEBUG("bdtun_release()\n");
         spin_lock(&dev->lock);
-        dev->ucnt--;
+        //dev->ucnt--;
         PDEBUG("device counter is %d for %s\n", dev->ucnt, dev->bd_gd->disk_name);
         spin_unlock(&dev->lock);
         return 0;
@@ -332,7 +341,6 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         spin_unlock(&dev->bio_list_lock);
 
         /* Validate request size */
-        PDEBUG("Count: %d, data dir: %lu, buf[0]: %d, bio->bi_size+1: %d", count, bio_data_dir(entry->bio), buf[0], entry->bio->bi_size+1);
         if (count < 1 ||
             (bio_data_dir(entry->bio) == READ && !buf[0] && count != entry->bio->bi_size + 1) ||
             (bio_data_dir(entry->bio) == READ &&  buf[0] && count != 1) ||
@@ -347,7 +355,7 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                 spin_lock(&dev->bio_list_lock);
                 list_del(&entry->list);
                 spin_unlock(&dev->bio_list_lock);
-                bio_endio(entry->bio, -1);
+                bio_endio(entry->bio, -EIO);
                 kfree(entry);
                 return 0;
         }
@@ -645,6 +653,7 @@ static void bdtun_remove_dev(struct bdtun *dev)
 static int bdtun_remove_k(const char *name)
 {
         struct bdtun *dev;
+        struct bdtun_bio_list_entry *entry;
         
         dev = bdtun_find_device(name);
         
@@ -661,6 +670,17 @@ static int bdtun_remove_k(const char *name)
         }
         dev->removing = 1;
         spin_unlock(&dev->lock);
+        
+        //set_capacity(dev->bd_gd, 0);
+        //ret = revalidate_disk(dev->bd_gd);
+        //PDEBUG("revalidate_disk says: %d", ret);
+        
+        while (!list_empty(&dev->bio_list)) {
+                entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
+                bio_endio(entry->bio, -EIO); // TODO: is this the right error code here?
+                list_del(dev->bio_list.next);
+                kfree(entry);
+        }
         
         bdtun_remove_dev(dev);
         
