@@ -93,7 +93,7 @@ struct bdtun {
 struct bdtun_add_disk_work {
         struct gendisk *gd;
         struct work_struct work;
-} add_disk_work;
+};
 
 struct workqueue_struct *add_disk_q;
 
@@ -118,6 +118,7 @@ static void bdtun_do_add_disk(struct work_struct *work)
         struct bdtun_add_disk_work *w = container_of(work, struct bdtun_add_disk_work, work);
         
         add_disk(w->gd);
+        kfree(w);
 }
 
 /*
@@ -420,6 +421,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         int qflags = 0;
         char charname[BDEVNAME_SIZE + 5];
         char qname[BDEVNAME_SIZE + 3];
+        struct bdtun_add_disk_work *add_disk_work;
         
         /*
          * Set up character device and workqueue name
@@ -570,11 +572,13 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         list_add_tail(&new->list, &device_list);
         
         /*
-         * Register the disk in a tasklet.
+         * Register the disk in a work queue.
          */
-        INIT_WORK(&add_disk_work.work, bdtun_do_add_disk);
-        add_disk_work.gd = new->bd_gd;
-        queue_work(add_disk_q, &add_disk_work.work);
+        add_disk_work = kmalloc(sizeof(struct bdtun_add_disk_work), GFP_KERNEL);
+        
+        INIT_WORK(&add_disk_work->work, bdtun_do_add_disk);
+        add_disk_work->gd = new->bd_gd;
+        queue_work(add_disk_q, &add_disk_work->work);
         
         PDEBUG("finished setting up device %s\n", name);
         
