@@ -1,2 +1,1 @@
-* block on master device instead of IO error
 * kernel: Find out how to user zero copy IO

@@ -54,7 +54,7 @@ static struct class *chclass;
 static struct device *ctrl_device;
 static int ctrl_devnum;
 static int ctrl_ucnt;
-static struct spinlock ctrl_lock;
+static struct mutex mutex;
 
 /*
  * BDTun device structure
@@ -423,6 +423,12 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         char qname[BDEVNAME_SIZE + 3];
         struct bdtun_add_disk_work *add_disk_work;
         
+        /* Check if device exist */
+        
+        if (bdtun_find_device(name)) {
+                return -EEXIST;
+        }
+        
         /*
          * Set up character device and workqueue name
          */
@@ -686,10 +692,13 @@ static int bdtun_remove_k(const char *name)
 
 static int bdtun_info_k(char *name, struct bdtun_info *device_info)
 {
-        struct bdtun *dev = bdtun_find_device(name);
+        struct bdtun *dev;
         
-        if (dev == NULL)
+        dev = bdtun_find_device(name);
+        
+        if (dev == NULL) {
                 return -ENOENT;
+        }
         
         device_info->bd_size       = dev->bd_size;
         device_info->bd_block_size = dev->bd_block_size;
@@ -728,6 +737,7 @@ static int bdtun_list_k(
                 i++;
         }
         
+        
         return bufpos;
 }
 
@@ -737,26 +747,16 @@ static int bdtun_list_k(
 static int ctrl_open(struct inode *inode, struct file *filp)
 {
         PDEBUG("got device_open on master dev\n");
-
-        spin_lock(&ctrl_lock);
-        if (ctrl_ucnt) {
-                spin_unlock(&ctrl_lock);
-                return -EBUSY;
+        if (mutex_lock_interruptible(&mutex)) {
+                return -ERESTARTSYS;
         }
-        ctrl_ucnt++;
-        spin_unlock(&ctrl_lock);
-        
         return 0;
 }
 
 static int ctrl_release(struct inode *inode, struct file *filp)
 {
         PDEBUG("got device_release on master dev\n");
-
-        spin_lock(&ctrl_lock);
-        ctrl_ucnt--;
-        spin_unlock(&ctrl_lock);
-
+        mutex_unlock(&mutex);
         return 0;
 }
 
@@ -884,7 +884,7 @@ static int __init bdtun_init(void)
 {
         int error;
         
-        spin_lock_init(&ctrl_lock);
+        mutex_init(&mutex);
         ctrl_ucnt = 0;
         
         /*
