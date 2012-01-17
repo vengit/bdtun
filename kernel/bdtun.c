@@ -451,7 +451,50 @@ unsigned int bdtunch_poll(struct file *filp, poll_table *wait) {
 }
 
 /*
- * Operations on character device
+ * Handle page faults of mmapped memory range. This function is used
+ * to read / write data from / to bio-s.
+ */
+struct page *bdtunch_mmap_nopage(
+        struct vm_area_struct vma*, unsigned long address, int *type)
+{
+        unsigned long pageno;
+        struct page *page = NOPAGE_SIGBUS;
+        
+        pageno = (address - vma->start) >> PAGE_SHIFT;
+        if (pageno > ...
+        
+        out:
+        return page;
+}
+
+/*
+ * Operations structure used with mmapped virtual memory areas contains
+ * a reference to the nopage function definied above.
+ */
+static struct vm_operations_struct bdtunch_mmap_ops = {
+        .nopage = bdtunch_mmap_nopage
+}
+
+/*
+ * mmap call handler. Sets up the memory mapping to the current bio
+ * according to the nopage method.
+ */
+static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
+{
+        unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
+        
+        if (offset >= __pa(high_memory) || (filp->f_flags & O_SYNC)) {
+                vma->vm_flags |= VM_IO
+        }
+        vma->vm_flags |= VM_RESERVED;
+        
+        vma->vm_ops = &bdtunch_mmap_ops;
+        
+        return 0;
+}
+
+/*
+ * Operations on the tunnel's character device
  */
 static struct file_operations bdtunch_ops = {
         .read    = bdtunch_read,
@@ -459,6 +502,7 @@ static struct file_operations bdtunch_ops = {
         .open    = bdtunch_open,
         .release = bdtunch_release,
         .poll    = bdtunch_poll
+        .mmap    = bdtunch_mmap
 };
 
 /*
