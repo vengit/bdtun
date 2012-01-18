@@ -1,0 +1,24 @@
+Writing block drivers with BDTun
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Compiling and linking
+~~~~~~~~~~~~~~~~~~~~~
+
+#include <bdtun.h>
+
+gcc -lbdtun myprogram.c
+
+Device management
+~~~~~~~~~~~~~~~~~
+
+Creating a device pair
+
+Removing a device pair
+
+Listing device pairs
+
+Getting information on a device pair
+
+Handling requests
+~~~~~~~~~~~~~~~~~
+
