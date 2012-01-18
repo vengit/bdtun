@@ -9,6 +9,7 @@
 *.lo
 *.tar.gz
 *.cache
+*.pyc
 
 Module.symvers
 modules.order

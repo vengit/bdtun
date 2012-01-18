@@ -101,9 +101,11 @@ struct bdtun_ctrl_command {
 #define BDTUN_COMM_REMOVE_SIZE sizeof(struct bdtun_ctrl_command)
 #define BDTUN_COMM_RESIZE_SIZE sizeof(struct bdtun_ctrl_command)
 
-int bdtun_read_request(int fd, struct bdtun_txreq *rq);
+int bdtun_read_request(int fd, struct bdtun_txreq *req);
 
 int bdtun_complete_request(int fd, struct bdtun_txreq *req);
+
+int bdtun_fail_request(int fd, struct bdtun_txreq *req);
 
 int bdtun_create(int fd, const char *name, uint64_t blocksize, uint64_t size, int capabilities);
 

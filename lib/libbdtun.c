@@ -11,31 +11,31 @@
 /*
  * Read a transfer request form a tunnel character device
  */
-int bdtun_read_request(int fd, struct bdtun_txreq *rq) {
+int bdtun_read_request(int fd, struct bdtun_txreq *req) {
         ssize_t res;
         size_t bufsize = 0;
         static char *buf = NULL;
         
-        res = read(fd, rq, BDTUN_TXREQ_HEADER_SIZE);
+        res = read(fd, req, BDTUN_TXREQ_HEADER_SIZE);
         if (res < 0) {
                 return res;
         }
 
         /* If the buffer size is less than the request
          * plus the completion byte then realloc */
-        if (bufsize < rq->size + 1) {
-                buf = realloc(buf, rq->size + 1);
+        if (bufsize < req->size + 1) {
+                buf = realloc(buf, req->size + 1);
                 if (buf == NULL) {
                         return -ENOMEM;
                 }
-                bufsize = rq->size + 1;
+                bufsize = req->size + 1;
         }
         
-        rq->buf = buf + 1;
+        req->buf = buf + 1;
         
-        if (rq->flags & REQ_WRITE) {
+        if (req->flags & REQ_WRITE) {
                 PDEBUG("Write request, getting data from kernel\n");
-                res = read(fd, rq->buf, rq->size);
+                res = read(fd, req->buf, req->size);
                 if (res < 0) {
                         return res;
                 }
@@ -100,6 +100,11 @@ int bdtun_create(int fd, const char *name, uint64_t blocksize, uint64_t size, in
         c.create.size = size;
         c.create.capabilities = capabilities;
         strncpy(c.create.name, name, 32);
+        
+        PDEBUG(
+                "Create: name: %s, bs: %" PRIu64 ", s: %" PRIu64 ", cap: %d\n",
+                c.create.name, c.create.blocksize,  c.create.size, c.create.capabilities
+        );
         
         ret = write(fd, &c, BDTUN_COMM_CREATE_SIZE);
         
