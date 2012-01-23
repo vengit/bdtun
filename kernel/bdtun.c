@@ -422,11 +422,27 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         char charname[BDEVNAME_SIZE + 5];
         char qname[BDEVNAME_SIZE + 3];
         struct bdtun_add_disk_work *add_disk_work;
+        uint64_t tmp1, tmp2;
         
         /* Check if device exist */
         
         if (bdtun_find_device(name)) {
                 return -EEXIST;
+        }
+        
+        if (block_size < 512 || block_size > PAGE_SIZE) {
+                return -EINVAL;
+        }
+        tmp1 = 0;
+        tmp2 = block_size;
+        while (tmp2 > 0 && tmp1 < 2) {
+                if (tmp2 & 1) {
+                        tmp1++;
+                }
+                tmp2 >>= 1;
+        }
+        if (tmp1 >= 2) {
+                return -EINVAL;
         }
         
         /*

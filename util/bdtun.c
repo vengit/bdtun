@@ -77,6 +77,7 @@ static struct argp_option options[] = {
 static int parse_opt(int key, char *arg, struct argp_state *state)
 {
         struct arguments *args = state->input;
+        int tmp1, tmp2;
 
         uint64_t size = 0;
         char *endptr = 0;
@@ -124,8 +125,16 @@ static int parse_opt(int key, char *arg, struct argp_state *state)
                 if (size > 4096) {
                         argp_error(state, "block size must be at most 4096");
                 }
-                if (size % 512) {
-                        argp_error(state, "block size must be a multiple of 512");
+                tmp1 = 0;
+                tmp2 = size;
+                while (tmp2 > 0 && tmp1 < 2) {
+                        if (tmp2 & 1) {
+                                tmp1++;
+                        }
+                        tmp2 >>= 1;
+                }
+                if (tmp1 >= 2) {
+                        argp_error(state, "block size must be a power of two");
                 }
                 args->blocksize = size;
                 break;
