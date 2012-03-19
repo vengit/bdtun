@@ -1,7 +1,7 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
 
-AC_PREREQ([2.67])
+AC_PREREQ([2.65])
 AC_INIT([bdtun], [0.0.1], [Fábián Tamás László <tamas.fabian@vengit.com>])
 AC_CONFIG_MACRO_DIR([m4])
 AM_INIT_AUTOMAKE
