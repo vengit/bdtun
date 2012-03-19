@@ -1,7 +1,6 @@
 #ifndef __BDTUN_H
 #define __BDTUN_H
 
-#include <linux/blk_types.h>
 #include <linux/fs.h>
 
 #ifdef __cplusplus
