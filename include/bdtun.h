@@ -3,6 +3,10 @@
 
 #include <linux/fs.h>
 
+#ifndef REQ_WRITE
+#define REQ_WRITE 1 /* TODO: get autoconf to find this out */
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
