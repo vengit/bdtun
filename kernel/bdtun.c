@@ -8,7 +8,6 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/types.h>
-#include <linux/vmalloc.h>
 #include <linux/genhd.h>
 #include <linux/blkdev.h>
 #include <linux/hdreg.h>
@@ -137,7 +136,7 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio)
         }
         spin_unlock(&dev->lock);
         
-        new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_ATOMIC);
+        new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_KERNEL);
         
         PDEBUG("make_request called\n");
         
@@ -458,7 +457,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
          * Allocate device structure
          */
         PDEBUG("allocating device sructure\n");
-        new = vmalloc(sizeof (struct bdtun));
+        new = kmalloc(sizeof (struct bdtun), GFP_KERNEL);
         if (new == NULL) {
                 PDEBUG("Could not allocate memory for device structure\n");
                 error = -ENOMEM;
@@ -700,7 +699,7 @@ static int bdtun_remove_k(const char *name)
         
         /* Unlink and free device structure */
         list_del(&dev->list);
-        vfree(dev);
+        kfree(dev);
         PDEBUG("device removed from list\n");
 
         return 0;
