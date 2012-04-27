@@ -421,7 +421,6 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         char charname[BDEVNAME_SIZE + 5];
         char qname[BDEVNAME_SIZE + 3];
         struct bdtun_add_disk_work *add_disk_work;
-        uint64_t tmp1, tmp2;
         
         /* Check if device exist */
         
@@ -432,15 +431,14 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         if (block_size < 512 || block_size > PAGE_SIZE) {
                 return -EINVAL;
         }
-        tmp1 = 0;
-        tmp2 = block_size;
-        while (tmp2 > 0 && tmp1 < 2) {
-                if (tmp2 & 1) {
-                        tmp1++;
-                }
-                tmp2 >>= 1;
+        
+        /* Check if block_size is a power of two */
+        if (block_size & (block_size - 1)) {
+                return -EINVAL;
         }
-        if (tmp1 >= 2) {
+        
+        /* Check if size is a multiple of block_size */
+        if (size % block_size) {
                 return -EINVAL;
         }
         
@@ -469,7 +467,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
          */
         new->bd_block_size = block_size;
         new->bd_nsectors   = size / block_size;
-        new->bd_size       = new->bd_nsectors * block_size;
+        new->bd_size       = size;
         
         /*
          * Semaphores and stuff like that 
@@ -775,6 +773,7 @@ static int ctrl_release(struct inode *inode, struct file *filp)
         return 0;
 }
 
+// TODO: these can cause race-conditions. refactor with mutex
 static char ctrl_response_buf[BDTUN_RESPONSE_SIZE];
 static int ctrl_response_size = 0;
 

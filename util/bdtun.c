@@ -125,15 +125,7 @@ static int parse_opt(int key, char *arg, struct argp_state *state)
                 if (size > 4096) {
                         argp_error(state, "block size must be at most 4096");
                 }
-                tmp1 = 0;
-                tmp2 = size;
-                while (tmp2 > 0 && tmp1 < 2) {
-                        if (tmp2 & 1) {
-                                tmp1++;
-                        }
-                        tmp2 >>= 1;
-                }
-                if (tmp1 >= 2) {
+                if (size & (size - 1)) {
                         argp_error(state, "block size must be a power of two");
                 }
                 args->blocksize = size;
