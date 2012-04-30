@@ -123,8 +123,11 @@ static void bdtun_do_add_disk(struct work_struct *work)
 /*
  * Request processing
  */
+
+// TODO: only ONE request is delivered by the kernel, this is a very big limitation
 static int bdtun_make_request(struct request_queue *q, struct bio *bio)
 {
+        // TODO: Implicit cast, not nice
         struct bdtun *dev = q->queuedata;
         struct bdtun_bio_list_entry *new;
         
@@ -158,6 +161,8 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio)
 
 static int bdtun_open(struct block_device *bdev, fmode_t mode)
 {
+        // TODO: what if the bdev structure is kfreed in the meantime we run??
+        // TODO: implicit cast, not nice
         struct bdtun *dev = bdev->bd_disk->queue->queuedata;
         PDEBUG("bdtun_open()\n");
         spin_lock(&dev->lock);
@@ -223,6 +228,7 @@ static int bdtunch_open(struct inode *inode, struct file *filp)
         dev->ch_ucnt++;
         dev->ucnt++;
         spin_unlock(&dev->lock);
+        // TODO: implicit cast, not nice
         filp->private_data = dev;
         return 0;
 }
@@ -286,6 +292,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
         spin_unlock(&dev->bio_list_lock);
 
+        // TODO: multithreading backend? At least, strict, strong, emphasized protocol definition notification
         if (count == BDTUN_TXREQ_HEADER_SIZE) {
                 req = (struct bdtun_txreq *)buf;
                 req->flags  = entry->bio->bi_rw;
@@ -298,6 +305,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 bio_for_each_segment(bvec, entry->bio, i) {
                         void *kaddr = kmap(bvec->bv_page);
                         
+                        // TODO: its too expensive, nocopy should be implemented
                         if(copy_to_user(buf+pos, kaddr+bvec->bv_offset,
                                         bvec->bv_len) != 0)
                         {
@@ -359,6 +367,7 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         if (bio_data_dir(entry->bio) == READ) {
                 bio_for_each_segment(bvec, entry->bio, i) {
                         void *kaddr = kmap(bvec->bv_page);
+                        // TODO: too expensive
                         if(copy_from_user(kaddr+bvec->bv_offset, buf+pos, bvec->bv_len) != 0) {
                                 PDEBUG("error copying data from user\n");
                                 kunmap(bvec->bv_page);
@@ -424,6 +433,8 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         
         /* Check if device exist */
         
+        // TODO: relying on the fact, that only one process can open the control chardev at the same time. But what if,
+        // the process forks itself AFTER? We should use Locks here too
         if (bdtun_find_device(name)) {
                 return -EEXIST;
         }
@@ -502,6 +513,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         }
         
         PDEBUG("setting up queue parameters\n");
+        // TODO: implicit cast, not nice
         queue->queuedata = new;
         blk_queue_make_request(queue, bdtun_make_request);
         blk_queue_logical_block_size(queue, block_size);
@@ -570,6 +582,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
          * Set up the gendisk structure.
          */
         PDEBUG("allocating the gendisk structure\n");
+        // TODO: factor out BDTUN_BD_MINORS as a module parameter
         new->bd_gd = alloc_disk(BDTUN_BD_MINORS);
         if (!new->bd_gd) {
                 PDEBUG("Unable to alloc_disk()\n");
@@ -595,6 +608,8 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
          */
         add_disk_work = kmalloc(sizeof(struct bdtun_add_disk_work), GFP_KERNEL);
         
+        // TODO: what if an instant REMOVE operation arrives BEFORE bdtun_do_add_disk could run? synchronization
+        // every other operation should hold the synch primitive, which relies on the existence of the device file
         INIT_WORK(&add_disk_work->work, bdtun_do_add_disk);
         add_disk_work->gd = new->bd_gd;
         queue_work(add_disk_q, &add_disk_work->work);
@@ -632,6 +647,7 @@ static int bdtun_resize_k(const char *name, uint64_t size)
         }
         
         set_capacity(dev->bd_gd, size / KERNEL_SECTOR_SIZE);
+        // TODO: Needs to be run AFTER add_disk, needs to synchronize, see also bdtun_create_k TODO
         ret = revalidate_disk(dev->bd_gd);
         
         if (ret) {
@@ -659,6 +675,7 @@ static void bdtun_remove_dev(struct bdtun *dev)
         cdev_del(&dev->ch_dev);
         PDEBUG("device shutdown finished\n");
         
+        // TODO: Needs to be run AFTER add_disk, needs to synchronize, see also bdtun_create_k TODO
         /* Unreg device object and class if needed */
         device_destroy(chclass, dev->ch_num);
         
@@ -679,6 +696,7 @@ static int bdtun_remove_k(const char *name)
         
         spin_lock(&dev->lock);
                 
+        // TODO: removing should run only once, dev->removing flag could be used to check this
         if (dev->ucnt) {
                 spin_unlock(&dev->lock);
                 return -EBUSY;
