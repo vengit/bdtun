@@ -269,6 +269,8 @@ int main(int argc, char *argv[])
                 if (req.flags & REQ_WRITE) {
                         PDEBUG("Writing to disk image\n");
                         memcpy(imgmap + req.offset, req.buf, req.size);
+                        // TODO: make this a parameter
+                        msync(imgmap, args.size, MS_SYNC);
                 } else {
                         PDEBUG("Reading from disk image\n");
                         memcpy(req.buf, imgmap + req.offset, req.size);
