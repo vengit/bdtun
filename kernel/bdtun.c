@@ -32,6 +32,11 @@ MODULE_LICENSE("GPL");
 struct bdtun_bio_list_entry {
         struct list_head list;
         struct bio *bio;
+        unsigned long start_time;
+        /* TODO: start_time mimics the similarly named field
+         * in a request struct. This may be inaccurate. Check
+         * where this field gets propagated to see if this is OK.
+         */
 };
 
 /*
@@ -118,6 +123,8 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio)
 {
         struct bdtun *dev = (struct bdtun *)(q->queuedata);
         struct bdtun_bio_list_entry *new;
+        const int rw = bio_data_dir(bio);
+        int cpu;
         
         spin_lock(&dev->lock);
         if (dev->removing) {
@@ -134,7 +141,8 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio)
         if (!new) {
                 return -EIO;
         }
-        
+
+        new->start_time = jiffies;
         new->bio = bio;
         
         spin_lock(&dev->bio_list_lock);
@@ -143,15 +151,20 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio)
         
         wake_up(&dev->reader_queue);
         PDEBUG("request queued\n");
-        
+
+        cpu = part_stat_lock();
+        part_stat_inc(cpu, &dev->bd_gd->part0, ios[rw]);
+        part_stat_add(cpu, &dev->bd_gd->part0, sectors[rw], bio_sectors(bio));
+        part_inc_in_flight(&dev->bd_gd->part0, rw);
+        part_stat_unlock();
+
         return 0;
 }
 
 static int bdtun_open(struct block_device *bdev, fmode_t mode)
 {
         // TODO: what if the bdev structure is kfreed in the meantime we run??
-        // TODO: implicit cast, not nice
-        struct bdtun *dev = bdev->bd_disk->queue->queuedata;
+        struct bdtun *dev = (struct bdtun *)(bdev->bd_disk->queue->queuedata);
         PDEBUG("bdtun_open()\n");
         spin_lock(&dev->lock);
         if (dev->removing) {
@@ -314,10 +327,13 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
 
 static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, loff_t *offset)
 {
-        struct bdtun *dev = filp->private_data;
+        struct bdtun *dev = (struct bdtun *)(filp->private_data);
         struct bdtun_bio_list_entry *entry;
         struct bio_vec *bvec;
+        unsigned long duration;
         unsigned long pos = 0;
+        int cpu;
+        int rw;
         int i;
 
         spin_lock(&dev->bio_list_lock);
@@ -345,6 +361,16 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                 list_del(&entry->list);
                 spin_unlock(&dev->bio_list_lock);
                 bio_endio(entry->bio, -EIO);
+
+                // TODO: factor this into a function.
+                rw = bio_data_dir(entry->bio);
+                duration = jiffies - entry->start_time;
+                cpu = part_stat_lock();
+                part_stat_add(cpu, &dev->bd_gd->part0, ticks[rw], duration);
+                part_round_stats(cpu, &dev->bd_gd->part0);
+                part_dec_in_flight(&dev->bd_gd->part0, rw);
+                part_stat_unlock();
+
                 kfree(entry);
                 return 0;
         }
@@ -356,9 +382,13 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                 bio_for_each_segment(bvec, entry->bio, i) {
                         void *kaddr = kmap(bvec->bv_page);
                         // TODO: too expensive
-                        if(copy_from_user(kaddr+bvec->bv_offset, buf+pos, bvec->bv_len) != 0) {
+                        if(copy_from_user(kaddr+bvec->bv_offset,
+                                          buf+pos, bvec->bv_len) != 0)
+                        {
                                 PDEBUG("error copying data from user\n");
                                 kunmap(bvec->bv_page);
+                                /* We do not complete the bio here,
+                                 * so the user process can try again */
                                 return -EFAULT;
                         }
                         kunmap(bvec->bv_page);
@@ -372,6 +402,15 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         
         bio_endio(entry->bio, 0);
         
+        // TODO: factor this into a function.
+        rw = bio_data_dir(entry->bio);
+        duration = jiffies - entry->start_time;
+        cpu = part_stat_lock();
+        part_stat_add(cpu, &dev->bd_gd->part0, ticks[rw], duration);
+        part_round_stats(cpu, &dev->bd_gd->part0);
+        part_dec_in_flight(&dev->bd_gd->part0, rw);
+        part_stat_unlock();
+
         kfree(entry);
         
         return count;
