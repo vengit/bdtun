@@ -24,18 +24,6 @@
 MODULE_LICENSE("GPL");
 
 /*
- * A work item for our work queue.
- * We need a work queue to get the bio-s out of
- * the interrupt context, and be able to sleep
- * while processing them.
- */
-struct bdtun_work {
-        struct bio *bio;
-        struct bdtun *dev;
-        struct work_struct work;
-};
-
-/*
  * A list in wich unprocessed bio-s are contained. The work items
  * in the work queue put bio-s into these list items and chain them
  * up to form a linked list. The list is processed upon reads and writes
@@ -124,11 +112,11 @@ static void bdtun_do_add_disk(struct work_struct *work)
  * Request processing
  */
 
-// TODO: only ONE request is delivered by the kernel, this is a very big limitation
+/* TODO: only ONE request is delivered by the kernel,
+ * this is a very big limitation */
 static int bdtun_make_request(struct request_queue *q, struct bio *bio)
 {
-        // TODO: Implicit cast, not nice
-        struct bdtun *dev = q->queuedata;
+        struct bdtun *dev = (struct bdtun *)(q->queuedata);
         struct bdtun_bio_list_entry *new;
         
         spin_lock(&dev->lock);
