@@ -48,3 +48,5 @@ util/Makefile
 include/config.h
 
 include/stamp-h1
+
+lib/bdtun.pc
