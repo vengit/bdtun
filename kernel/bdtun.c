@@ -18,6 +18,7 @@
 #include <linux/workqueue.h>
 #include <linux/spinlock.h>
 #include <linux/fs.h>
+#include <linux/poll.h>
 
 #include "../include/bdtun.h"
 
@@ -75,6 +76,7 @@ struct bdtun {
         uint64_t bd_size;
         uint64_t bd_block_size;
         uint64_t bd_nsectors;
+        int capabilities;
         struct gendisk *bd_gd;
 };
 
@@ -139,6 +141,7 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio)
         PDEBUG("make_request called\n");
         
         if (!new) {
+                PDEBUG("Could not allocate bio list entry\n");
                 return -EIO;
         }
 
@@ -416,6 +419,24 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         return count;
 }
 
+unsigned int bdtunch_poll(struct file *filp, poll_table *wait) {
+        struct bdtun *dev = filp->private_data;
+        unsigned int mask = 0;
+        
+        poll_wait(filp, &dev->reader_queue, wait);
+        
+        mask |= POLLOUT | POLLWRNORM; /* writable */
+        
+        spin_lock(&dev->bio_list_lock);
+        if (!list_empty(&dev->bio_list)) {
+                PDEBUG("list is not empty, setting mask\n");
+                mask |= POLLIN | POLLRDNORM; /* readable */
+        }
+        spin_unlock(&dev->bio_list_lock);
+        
+        return mask;
+}
+
 /*
  * Operations on character device
  */
@@ -423,7 +444,8 @@ static struct file_operations bdtunch_ops = {
         .read    = bdtunch_read,
         .write   = bdtunch_write,
         .open    = bdtunch_open,
-        .release = bdtunch_release
+        .release = bdtunch_release,
+        .poll    = bdtunch_poll
 };
 
 /*
@@ -541,6 +563,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         
         PDEBUG("setting up queue parameters\n");
         // TODO: implicit cast, not nice
+        new->capabilities = capabilities;
         queue->queuedata = new;
         blk_queue_make_request(queue, bdtun_make_request);
         blk_queue_logical_block_size(queue, block_size);
@@ -763,6 +786,8 @@ static int bdtun_info_k(char *name, struct bdtun_info *device_info)
         device_info->bd_major      = dev->bd_gd->major;
         device_info->bd_minor      = dev->bd_gd->first_minor;
         device_info->ch_major      = MAJOR(dev->ch_num);
+        device_info->ch_minor      = MINOR(dev->ch_num);
+        device_info->capabilities  = dev->capabilities;
         
         return 0;
 }

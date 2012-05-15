@@ -16,6 +16,7 @@ modules.order
 
 bdtunloop
 bdtun
+dummy
 
 aclocal.m4
 
@@ -50,3 +51,4 @@ include/config.h
 include/stamp-h1
 
 lib/bdtun.pc
+lib/bdtun_backend.pc

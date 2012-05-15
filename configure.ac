@@ -39,6 +39,6 @@ AC_FUNC_REALLOC
 #                   lib
 #                   util])
 
-AC_CONFIG_FILES([Makefile include/Makefile lib/Makefile lib/bdtun.pc util/Makefile example/Makefile kernel/Makefile])
+AC_CONFIG_FILES([Makefile include/Makefile lib/Makefile lib/bdtun.pc lib/bdtun_backend.pc util/Makefile example/Makefile kernel/Makefile])
 
 AC_OUTPUT

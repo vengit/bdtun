@@ -77,7 +77,6 @@ static struct argp_option options[] = {
 static int parse_opt(int key, char *arg, struct argp_state *state)
 {
         struct arguments *args = state->input;
-        int tmp1, tmp2;
 
         uint64_t size = 0;
         char *endptr = 0;
