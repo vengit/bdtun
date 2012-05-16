@@ -457,11 +457,19 @@ unsigned int bdtunch_poll(struct file *filp, poll_table *wait) {
 struct page *bdtunch_mmap_nopage(
         struct vm_area_struct vma*, unsigned long address, int *type)
 {
+        unsigned long offset;
         unsigned long pageno;
         struct page *page = NOPAGE_SIGBUS;
-        
+        struct bdtun *dev = (struct bdtun *)vma->vm_private_data;
+        void *pageptr = NULL;
+
+        // Get current bio
+        // Which page should we get?
         pageno = (address - vma->start) >> PAGE_SHIFT;
         if (pageno > ...
+        
+        // Increment usage count
+        get_page(page);
         
         out:
         return page;
@@ -482,14 +490,14 @@ static struct vm_operations_struct bdtunch_mmap_ops = {
 static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
 {
         unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
-        
+
         if (offset >= __pa(high_memory) || (filp->f_flags & O_SYNC)) {
-                vma->vm_flags |= VM_IO
+                vma->vm_flags |= VM_IO;
         }
         vma->vm_flags |= VM_RESERVED;
-        
         vma->vm_ops = &bdtunch_mmap_ops;
-        
+        vma->vm_private_date = filp->private_data;
+
         return 0;
 }
 
