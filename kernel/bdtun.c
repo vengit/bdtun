@@ -19,6 +19,7 @@
 #include <linux/spinlock.h>
 #include <linux/fs.h>
 #include <linux/poll.h>
+#include <linux/version.h>
 
 #include "../include/bdtun.h"
 
@@ -118,10 +119,17 @@ static void bdtun_do_add_disk(struct work_struct *work)
 /*
  * Request processing
  */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 2, 0)
+#   define MKREQ_RETTYPE int
+#   define MKREQ_RETVAL 0
+#else
+#   define MKREQ_RETTYPE void
+#   define MKREQ_RETVAL 
+#endif
 
 /* TODO: only ONE request is delivered by the kernel,
  * this is a very big limitation */
-static int bdtun_make_request(struct request_queue *q, struct bio *bio)
+static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio)
 {
         struct bdtun *dev = (struct bdtun *)(q->queuedata);
         struct bdtun_bio_list_entry *new;
@@ -132,7 +140,7 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio)
         if (dev->removing) {
                 spin_unlock(&dev->lock);
                 bio_endio(bio, -EIO);
-                return 0;
+                return MKREQ_RETVAL;
         }
         spin_unlock(&dev->lock);
         
@@ -142,7 +150,8 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio)
         
         if (!new) {
                 PDEBUG("Could not allocate bio list entry\n");
-                return -EIO;
+                bio_endio(bio, -EIO);
+                return MKREQ_RETVAL;
         }
 
         new->start_time = jiffies;
@@ -161,7 +170,7 @@ static int bdtun_make_request(struct request_queue *q, struct bio *bio)
         part_inc_in_flight(&dev->bd_gd->part0, rw);
         part_stat_unlock();
 
-        return 0;
+        return MKREQ_RETVAL;
 }
 
 static int bdtun_open(struct block_device *bdev, fmode_t mode)
