@@ -6,16 +6,19 @@
 
 #include "bdtun_backend.h"
 
+// Name of this backend
+char * backend_program_name = "dummy_backend";
+
+// Backend-specific global state and configuration
 struct backend_args {
         char *testopt;
 };
 
+// Backend-specific argp settings
 static struct argp_option options[] = {
 {"testopt",     't', "TESTOPT",           0, "Test option for backend"},
 {0}
 };
-
-char * backend_program_name = "dummy_backend";
 
 static int parse_opt(int key, char *arg, struct argp_state *state)
 {
@@ -34,6 +37,9 @@ static struct argp argp = {
         parse_opt
 };
 
+/*
+ * Initializes custom argp parsing, and maybe others
+ */
 int backend_init() {
         args.backend_args = (void *)calloc(1, sizeof(struct backend_args));
         if (args.backend_args == 0) {
@@ -48,10 +54,16 @@ int backend_init() {
         return 0;
 }
 
+/*
+ * Do some deinitialization, if needed
+ */
 void backend_deinit() {
         return;
 }
 
+/*
+ * Opens the backend
+ */
 int backend_open() {
         char* testopt = ((struct backend_args *)args.backend_args)->testopt;
         if (testopt != 0) {
@@ -60,14 +72,23 @@ int backend_open() {
         return 0;
 }
 
+/*
+ * Closes the backend
+ */
 void backend_close() {
         return;
 }
 
+/*
+ * Called on read requests
+ */
 int backend_read(struct bdtun_txreq *req) {
         return 0;
 }
 
+/*
+ * Called on write requests
+ */
 int backend_write(struct bdtun_txreq *req) {
         return 0;
 }

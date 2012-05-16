@@ -8,6 +8,7 @@
 
 #define BDTUN_CTRLDEV "/dev/bdtun"
 
+// Global state, configuration
 struct arguments {
         char *tunnel;
         char *devname;
@@ -23,14 +24,19 @@ struct arguments {
         sigset_t sigmask;
         void *backend_args;
 };
-
 extern struct arguments args;
 
+// Logging macros
 #define LOG_ERROR(fmt, vargs...) if (args.syslog) { syslog(LOG_CRIT, fmt, ## vargs); };\
         if (!args.quiet) { fprintf(stderr, fmt, ## vargs); }
 
+#define LOG_INF(fmt, vargs...) if (args.syslog) { syslog(LOG_INFO, fmt, ## vargs); };\
+        if (!args.quiet) { fprintf(stderr, fmt, ## vargs); }
+
+// This should be set by backend implementation
 extern char * backend_program_name;
 
+// backend_init() should call this for custom argp parsing
 void set_argp(struct argp *backend_argp);
 
 /*

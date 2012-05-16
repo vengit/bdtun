@@ -19,31 +19,50 @@
 
 #define BDTUN_CTRLDEV "/dev/bdtun"
 
+// Global variable for holding configuration, and global state
+struct arguments args = {0};
+
+// Exit condition, signal handler uses it
+static int volatile exitflag = 1;
+
+// These are used by argp
 const char *argp_program_version = PACKAGE_STRING;
 const char *argp_program_bug_address = PACKAGE_BUGREPORT;
 
-struct arguments args = {0};
-
-static int volatile exitflag = 1;
-
 static struct argp_option options[] = {
 
-{0, 0, 0, 0, "Backend options", 1},
+{0,             0,      0,              0,
+        "Backend options", 1},
 
-{0, 0, 0, 0, "Device options"},
-{"size",         's', "SIZE",         0, "device size in bytes"},
-{"block-size",   'b', "BLOCKSIZE",    0, "block size in bytes, default is 512"},
+{0,             0,      0,              0,
+        "Device options"},
 
-{0, 0, 0, 0, "Service options"},
-{"daemon",       'd', 0,              0, "Daemonize the service process"},
-{"syslog",       'l', 0,              0, "Writes log messages to syslog"},
-{"quiet",        'q', 0,              0, "Writes log messages to console, daemon mode can't be set"},
+{"size",        's',    "SIZE",         0,
+        "device size in bytes"},
+
+{"block-size",  'b',    "BLOCKSIZE",    0,
+        "block size in bytes, default is 512"},
+
+{0,             0,      0,              0,
+        "Service options"},
+
+{"daemon",      'd',    0,              0,
+        "Daemonize the service process"},
+ 
+{"syslog",      'l',    0,              0,
+        "Writes log messages to syslog"},
+ 
+{"quiet",       'q',    0,              0,
+        "Writes log messages to console, daemon mode can't be set"},
 
 {0}
 };
 
 static struct argp_child children[] = {{0, 0, 0, 1}, {0}};
 
+/*
+ * Function for argp-style argument parsing
+ */
 static error_t parse_opt(int key, char *arg, struct argp_state *state)
 {
         struct arguments *args = (struct arguments *)state->input;
@@ -65,13 +84,16 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
                         argp_error(state, "invalid number: %s", arg);
                 }
                 if (tmp < 512) {
-                        argp_error(state, "block size must be at least 512");
+                        argp_error(state,
+                        "block size must be at least 512");
                 }
                 if (tmp > 4096) {
-                        argp_error(state, "block size must be at most 4096");
+                        argp_error(state,
+                        "block size must be at most 4096");
                 }
                 if (tmp & (tmp - 1)) {
-                        argp_error(state, "block size must be a power of two");
+                        argp_error(state,
+                        "block size must be a power of two");
                 }
                 args->blocksize = tmp;
                 break;
@@ -88,7 +110,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
         case ARGP_KEY_ARG:
                 if (state->arg_num == 0) {
                         if (strlen(arg) >= 32) {
-                                argp_error(state, "tunnel name must be shorter than %d", 32);
+                                argp_error(state, 
+                                "tunnel name must be shorter than %d",
+                                32);
                         }
                         args->tunnel = arg;
                 } else {
@@ -110,6 +134,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
         return 0;
 }
 
+// Argp parameters
 static struct argp argp = {
         options,
         parse_opt,
@@ -117,11 +142,19 @@ static struct argp argp = {
         "Sets up a backend service for a block device",
 };
 
+/*
+ * This can be called from backend_init() to set up additional argp
+ * parsing. Additional parser can use void *backend_args in the global
+ * arguments structure for custom state and configuration.
+ */
 void set_argp(struct argp *backend_argp) {
         children->argp = backend_argp;
         argp.children = children;
 }
 
+/*
+ * Daemonizes the process, sets up a new session, and closes std*
+ */
 static int daemonize(void) {
         pid_t pid, sid;
         
@@ -134,6 +167,7 @@ static int daemonize(void) {
                 exit(EXIT_SUCCESS);
         }
         PDEBUG("successfully forked\n");
+        
         // Settings umask and sid
         umask(0);
         sid = setsid();
@@ -150,6 +184,7 @@ static int daemonize(void) {
         }
         PDEBUG("successfully chdir to /\n");
         
+        // Closing standard descriptors
         close(STDIN_FILENO);
         close(STDOUT_FILENO);
         close(STDERR_FILENO);
@@ -158,6 +193,10 @@ static int daemonize(void) {
         return 0;
 }
 
+/*
+ * Signal handler causing the service stop gracefully on specific
+ * signals.
+ */
 static void signal_handler(int sig) {
         switch(sig) {
                 case SIGINT:
@@ -167,39 +206,50 @@ static void signal_handler(int sig) {
         }
 }
 
+/*
+ * Sets up the signal handler defined before for specific signals
+ */
 static int setup_signals() {
         sigaddset(&args.sigmask, SIGTERM);
         if (signal(SIGTERM, signal_handler) == SIG_ERR) {
                 LOG_ERROR("setup_signals: cannot set up TERM signal\n");
                 return -1;
         }
-        if (!args.daemon) {
-                sigaddset(&args.sigmask, SIGINT);
-                if (signal(SIGINT, signal_handler) == SIG_ERR) {
-                        LOG_ERROR("setup_signals: cannot set up INT signal\n");
-                        return -1;
-                }
+        sigaddset(&args.sigmask, SIGINT);
+        if (signal(SIGINT, signal_handler) == SIG_ERR) {
+                LOG_ERROR("setup_signals: cannot set up INT signal\n");
+                return -1;
         }
         return 0;
 }
 
+/*
+ * Set up configuration defaults, calls argp parser, and initializes
+ * global args structure
+ */
 static int get_arguments(int argc, char *argv[]) {
-        char *devname = (char *)malloc(sizeof(char) * 42);
+        char *devname;
+        
+        // Default values
+        args.blocksize = 512;
 
+        //TODO: factor out this "magic" 42 length contrained by kernel
+        devname = (char *)malloc(sizeof(char) * 42);
         if (devname == 0) {
                 LOG_ERROR("get_arguments: cannot allocate memory\n");
                 return -1;
         }
         
-        args.blocksize = 512;
-        
+        // Calling argp parser, filling up args global
         if (argp_parse(&argp, argc, argv, 0, 0, &args)) {
-                LOG_ERROR("get_arguments: cannot parse arguments (argp_parse)\n");
+                LOG_ERROR(
+                "get_arguments: cannot parse arguments (argp_parse)\n");
                 return -1;
         }
         
         assert(args.tunnel != 0);
         
+        // Tunnel naming convention: /dev/{name}_tun
         strcpy(devname, "/dev/");
         strcpy(devname + 5, args.tunnel);
         strcat(devname + 5, "_tun");
@@ -211,6 +261,10 @@ static int get_arguments(int argc, char *argv[]) {
         return 0;
 }
 
+/*
+ * Sets up a new bdtun block device if neccessary, or sanity-checks an
+ * existing one with the same name
+ */
 static int blockdev_init() {
         struct bdtun_info info;
         int ret;
@@ -218,19 +272,25 @@ static int blockdev_init() {
 
         assert(args.tunnel != 0);
         
-        /* Open control device */
+        // Open control device
         ctrldev = open(BDTUN_CTRLDEV, O_RDWR);
         if (ctrldev < 0) {
-                LOG_ERROR("blockdev_init: could not open control device %s\n", BDTUN_CTRLDEV);
+                LOG_ERROR(
+                "blockdev_init: could not open control device %s\n",
+                        BDTUN_CTRLDEV);
                 return -1;
         }
         PDEBUG("Main control device cannot be opened\n");
         
+        // Get info about tunnel given by name at command line
         ret = bdtun_info(ctrldev, args.tunnel, &info);
         if (ret) {
-                PDEBUG("Cannot query device info, possibly it doesn't exist, trying to create\n");
+                // This is the case, when tunnel has not created yet,
+                // let's create it.
+                PDEBUG("Cannot query device info, trying to create\n");
                 if (!args.size) {
-                        LOG_ERROR("blockdev_init: tunnel %s does not exist, size must be given for creation\n", args.tunnel);
+                        LOG_ERROR(
+                        "blockdev_init: size must be given for creation\n");
                         return -1;
                 }
                 if (args.size % args.blocksize) {
@@ -239,6 +299,8 @@ static int blockdev_init() {
                                args.size, args.blocksize);
                         return -1;
                 }
+                
+                // Create call
                 ret = bdtun_create(ctrldev, args.tunnel, args.blocksize, args.size, args.capabilities);
                 if (ret < 0) {
                         LOG_ERROR("blockdev_init: could not query or create tunnel %s\n", args.tunnel);
@@ -246,14 +308,20 @@ static int blockdev_init() {
                 }
                 PDEBUG("blockdev successfully created\n");
                 args.create_tun = 1;
+                
+                // Query back tunnel
                 ret = bdtun_info(ctrldev, args.tunnel, &info);
                 if (ret) {
-                        LOG_ERROR("blockdev_init: cannot query or create tunnel %s\n", args.tunnel);
+                        LOG_ERROR(
+                        "blockdev_init: cannot query or create tunnel %s\n",
+                        args.tunnel);
                         bdtun_remove(ctrldev, args.tunnel);
                         return -1;
                 }
                 PDEBUG("created blockdev successfully query back\n");
         } else {
+                // This is the case, when tunnel is already exist, just
+                // sanity-check it
                 if (!args.size) {
                         args.size = info.bd_size;
                 }
@@ -265,6 +333,8 @@ static int blockdev_init() {
                 }
         }
         
+        // At this point, all parameters must comply with command-line
+        // parameters
         if (args.blocksize != info.bd_block_size) {
                 LOG_ERROR("blockdev_init: tunneled device block size of %" PRIu64
                 " doesn't match given block size of %" PRIu64 "\n",
@@ -282,7 +352,8 @@ static int blockdev_init() {
         }
         
         if (args.capabilities != info.capabilities) {
-                LOG_ERROR("blockdev_init: tunneled device capabilities %d doesn't match given capabilities %d\n",
+                LOG_ERROR(
+                "blockdev_init: tunneled device capabilities %d doesn't match given capabilities %d\n",
                 info.capabilities, args.capabilities);
                 if (args.create_tun) bdtun_remove(ctrldev, args.tunnel);
                 return -1;
@@ -293,6 +364,9 @@ static int blockdev_init() {
         return 0;
 }
 
+/*
+ * Destructs the block device, if it was created by this service
+ */
 static void blockdev_deinit() {
         int ctrldev;
         
@@ -300,7 +374,9 @@ static void blockdev_deinit() {
                 /* Open control device */
                 ctrldev = open(BDTUN_CTRLDEV, O_RDWR);
                 if (ctrldev < 0) {
-                        LOG_ERROR("blockdev_deinit: could not open control device %s\n", BDTUN_CTRLDEV);
+                        LOG_ERROR(
+                        "blockdev_deinit: could not open control device %s\n",
+                                BDTUN_CTRLDEV);
                         return;
                 }
                 bdtun_remove(ctrldev, args.tunnel);
@@ -309,21 +385,34 @@ static void blockdev_deinit() {
         }
 }
 
+/*
+ * Opens the control chardevice for the blockdev
+ */
 static int blockdev_open() {
         assert(args.devname != 0);
         
         if((args.bdtunchdev = open(args.devname, O_RDWR)) < 0) {
-                LOG_ERROR("blockdev_open: unable to open bdtun character device file %s\n", args.devname);
+                LOG_ERROR(
+                "blockdev_open: unable to open bdtun character device file %s\n",
+                        args.devname);
                 return -1;
         }
         PDEBUG("successfully open blockdev control device\n");
         return 0;
 }
 
+/*
+ * Closes the control chardevice for the blockdev
+ */
 static int blockdev_close() {
         return close(args.bdtunchdev);
 }
 
+/*
+ * Serving loop, sets up signal mask, and uses pselect for
+ * signal-sensitive blocking. Calls backend_write and backend_read
+ * respectively.
+ */
 static int event_loop() {
         struct bdtun_txreq req;
         int ret;
@@ -331,56 +420,76 @@ static int event_loop() {
 	sigset_t orig_mask;
 
         assert(args.bdtunchdev >= 0);
-
+        
+        // Blocks all relevant signals, which can modify exitflag
         if (sigprocmask(SIG_BLOCK, &args.sigmask, &orig_mask) < 0) {
                 LOG_ERROR("event_loop: cannot block signals\n");
                 return -1;
         }
-
+        
+        LOG_INF("Successfully initialized, serving\n");
+                
         while (exitflag) {
+                // pselect setup
                 FD_ZERO(&fds);
                 FD_SET(args.bdtunchdev, &fds);
                 
                 PDEBUG("blocking on pselect\n");
                 ret = pselect(args.bdtunchdev + 1, &fds, 0, 0, 0, &orig_mask);
-                PDEBUG("left pselect\n");
                 if (ret < 0 && errno != EINTR) {
-                        LOG_ERROR("event_loop: cannot pselect");
+                        // Error condition, which isn't caused by signals
+                        LOG_ERROR(
+                        "event_loop: cannot pselect, error code: %d",
+                                errno);
                         return -1;
                 } else if (!exitflag) {
+                        // Signal causing service exit
                         break;
                 } else if (ret == 0) {
+                        // Any other signal
                         continue;
                 }
                 
                 if (FD_ISSET(args.bdtunchdev, &fds)) {
+                        // Read bio request from kernel-space
                         if ((ret = bdtun_read_request(args.bdtunchdev, &req))) {
-                                LOG_ERROR("event_loop: cannot get request from device: %d\n", ret);
+                                LOG_ERROR(
+                                "event_loop: cannot get request from device: %d\n",
+                                        ret);
                                 return -1;
                         }
 
-                        /* Read / write backing file */
                         if (req.flags & REQ_WRITE) {
-                                /* Write each args.blocksize sized block at once */
+                                // It's a write request
                                 if ((ret = backend_write(&req)) < 0) {
-                                        LOG_ERROR("event_loop: cannot write data to backend: %d\n", ret);
+                                        LOG_ERROR(
+                                        "event_loop: cannot write data to backend: %d\n",
+                                                ret);
                                         return -1;
                                 }
                         } else {
-                                /* Read each args.blocksize sized block at once */
+                                // It's a read request
                                 if ((ret = backend_read(&req)) < 0) {
-                                        LOG_ERROR("event_loop: cannot read data from backend: %d\n", ret);
+                                        LOG_ERROR(
+                                        "event_loop: cannot read data from backend: %d\n",
+                                                ret);
                                         return -1;
                                 }
                         }
                         
-                        /* Complete request */
-                        if ((ret = bdtun_complete_request(args.bdtunchdev, &req))) {
-                                LOG_ERROR("event_loop: unable to signal completion on write: %d\n", ret);
+                        // Completing request towards kernel space
+                        ret = bdtun_complete_request(args.bdtunchdev,
+                                                        &req);
+                        if (ret) {
+                                LOG_ERROR(
+                                "event_loop: unable to signal completion on write: %d\n",
+                                        ret);
                                 return -1;
                         }
                 }
         }
+        
+        LOG_INF("Got a signal, shutting down...\n");
         
         return 0;
 }
@@ -395,10 +504,10 @@ int main(int argc, char *argv[]) {
         
         sigemptyset(&args.sigmask);
         
-        setlogmask (LOG_UPTO (LOG_WARNING));
+        setlogmask (LOG_UPTO (LOG_INFO));
         openlog(backend_program_name, LOG_CONS | LOG_PID | LOG_NDELAY, LOG_DAEMON);
         
-        if (backend_init() < 0) {
+        if (backend_init()) {
                 LOG_ERROR("Cannot initialize backend\n");
                 exit(EXIT_FAILURE);
         }
@@ -409,8 +518,10 @@ int main(int argc, char *argv[]) {
                 exit(EXIT_FAILURE);
         }
         PDEBUG("argument parse done\n");
+
+        LOG_INF("Starting up service\n");
         
-        if (blockdev_init() < 0) {
+        if (blockdev_init()) {
                 LOG_ERROR("Cannot initialize blockdev\n");
                 exit(EXIT_FAILURE);
         }
@@ -461,7 +572,8 @@ int main(int argc, char *argv[]) {
         PDEBUG("signal setup done\n");
         
         if (event_loop()) {
-                LOG_ERROR("Event loop left with fatal error condition\n");
+                LOG_ERROR(
+                        "Event loop left with fatal error condition\n");
         }
         PDEBUG("left event loop\n");
         
@@ -476,6 +588,8 @@ int main(int argc, char *argv[]) {
         
         backend_deinit();
         PDEBUG("backend deinitialized\n");
+
+        LOG_INF("Stopped service\n");
         
         closelog();
         
