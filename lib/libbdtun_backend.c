@@ -23,7 +23,7 @@
 struct arguments args = {0};
 
 // Exit condition, signal handler uses it
-static int volatile exitflag = 1;
+int volatile exitflag = 1;
 
 // These are used by argp
 const char *argp_program_version = PACKAGE_STRING;

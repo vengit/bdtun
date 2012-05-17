@@ -16,7 +16,9 @@ modules.order
 
 bdtunloop
 bdtun
+dummybd
 dummy
+membd
 
 aclocal.m4
 

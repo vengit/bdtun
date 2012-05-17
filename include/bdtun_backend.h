@@ -35,7 +35,9 @@ extern struct arguments args;
 
 // This should be set by backend implementation
 extern char * backend_program_name;
-
+// Can be used for long operations checking exit condition (value 0
+// means should be exited)
+extern int volatile exitflag;
 // backend_init() should call this for custom argp parsing
 void set_argp(struct argp *backend_argp);
 
