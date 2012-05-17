@@ -20,6 +20,7 @@
 #include <linux/fs.h>
 #include <linux/poll.h>
 #include <linux/version.h>
+#include <linux/mm.h>
 
 #include "../include/bdtun.h"
 
@@ -454,25 +455,29 @@ unsigned int bdtunch_poll(struct file *filp, poll_table *wait) {
  * Handle page faults of mmapped memory range. This function is used
  * to read / write data from / to bio-s.
  */
-struct page *bdtunch_mmap_nopage(
-        struct vm_area_struct vma*, unsigned long address, int *type)
+int bdtunch_mmap_fault(
+        struct vm_area_struct *vma, struct vm_fault *vmf)
 {
         unsigned long offset;
         unsigned long pageno;
-        struct page *page = NOPAGE_SIGBUS;
+        struct page *page = NULL;
         struct bdtun *dev = (struct bdtun *)vma->vm_private_data;
-        void *pageptr = NULL;
 
         // Get current bio
         // Which page should we get?
-        pageno = (address - vma->start) >> PAGE_SHIFT;
-        if (pageno > ...
+        offset = (unsigned long)vmf->virtual_address - vma->vm_start;
+        pageno =  offset >> PAGE_SHIFT;
+
+        if (pageno > 0) {
+                return VM_FAULT_SIGBUS;
+		}
         
         // Increment usage count
         get_page(page);
+
+        vmf->page = page;
         
-        out:
-        return page;
+        return 0;
 }
 
 /*
@@ -480,8 +485,8 @@ struct page *bdtunch_mmap_nopage(
  * a reference to the nopage function definied above.
  */
 static struct vm_operations_struct bdtunch_mmap_ops = {
-        .nopage = bdtunch_mmap_nopage
-}
+        .fault = bdtunch_mmap_fault
+};
 
 /*
  * mmap call handler. Sets up the memory mapping to the current bio
@@ -496,7 +501,7 @@ static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
         }
         vma->vm_flags |= VM_RESERVED;
         vma->vm_ops = &bdtunch_mmap_ops;
-        vma->vm_private_date = filp->private_data;
+        vma->vm_private_data = filp->private_data;
 
         return 0;
 }
@@ -509,7 +514,7 @@ static struct file_operations bdtunch_ops = {
         .write   = bdtunch_write,
         .open    = bdtunch_open,
         .release = bdtunch_release,
-        .poll    = bdtunch_poll
+        .poll    = bdtunch_poll,
         .mmap    = bdtunch_mmap
 };
 
