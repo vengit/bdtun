@@ -7,7 +7,7 @@
 #include "bdtun_backend.h"
 
 // Name of this backend
-char * backend_program_name = "dummy_backend";
+char * backend_program_name = "dummybd";
 
 // Backend-specific global state and configuration
 struct backend_args {

@@ -19,6 +19,7 @@ bdtun
 dummybd
 dummy
 membd
+loopbd
 
 aclocal.m4
 
