@@ -103,8 +103,18 @@ int backend_open() {
                 return -1;
         }
         
-        bargs->imgmap = mmap(0, args.size, PROT_READ | PROT_WRITE, MAP_SHARED, bargs->fd, 0);
+        if (created) {
+                if (ftruncate(bargs->fd, args.size)) {
+                        LOG_ERROR("Created file %s cannot be truncate to given size %" PRIu64 "\n", bargs->filename, args.size);
+                        close(bargs->fd);
+                        unlink(bargs->filename);
+                        return -1;
+                }
+                PDEBUG("ftruncate successful\n");
+        }
         
+        bargs->imgmap = mmap(0, args.size, PROT_READ | PROT_WRITE, MAP_SHARED, bargs->fd, 0);
+        PDEBUG("mmap address: %p\n", bargs->imgmap);
         if (bargs->imgmap < 0) {
                 LOG_ERROR("Cannot mmap file %s\n", bargs->filename);
                 close(bargs->fd);
@@ -135,8 +145,9 @@ void backend_close() {
 int backend_read(struct bdtun_txreq *req) {
         struct backend_args *bargs = 
                 (struct backend_args *)args.backend_args;
-
+        PDEBUG("reading...\n");
         memcpy(req->buf, bargs->imgmap + req->offset, req->size);
+        PDEBUG("memcpy OK...\n");
         return 0;
 }
 
@@ -146,7 +157,7 @@ int backend_read(struct bdtun_txreq *req) {
 int backend_write(struct bdtun_txreq *req) {
         struct backend_args *bargs = 
                 (struct backend_args *)args.backend_args;
-
+        PDEBUG("writing...\n");
         memcpy(bargs->imgmap + req->offset, req->buf, req->size);
         return 0;
 }

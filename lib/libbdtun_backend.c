@@ -43,6 +43,9 @@ static struct argp_option options[] = {
 {"block-size",  'b',    "BLOCKSIZE",    0,
         "block size in bytes, default is 512"},
 
+{"keep-dev",    'k',    0,              0,
+        "on exit, don't destruct the blockdev"},
+
 {0,             0,      0,              0,
         "Service options"},
 
@@ -54,6 +57,7 @@ static struct argp_option options[] = {
  
 {"quiet",       'q',    0,              0,
         "Writes log messages to console, daemon mode can't be set"},
+
 
 {0}
 };
@@ -96,6 +100,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
                         "block size must be a power of two");
                 }
                 args->blocksize = tmp;
+                break;
+        case 'k':
+                args->keepdev = 1;
                 break;
         case 'd':
                 args->daemon = 1;
@@ -202,6 +209,7 @@ static void signal_handler(int sig) {
                 case SIGINT:
                 case SIGTERM:
                         exitflag = 0;
+                        PDEBUG("exitflag set up\n");
                         break;
         }
 }
@@ -280,7 +288,7 @@ static int blockdev_init() {
                         BDTUN_CTRLDEV);
                 return -1;
         }
-        PDEBUG("Main control device cannot be opened\n");
+        PDEBUG("Main control device opened\n");
         
         // Get info about tunnel given by name at command line
         ret = bdtun_info(ctrldev, args.tunnel, &info);
@@ -370,7 +378,7 @@ static int blockdev_init() {
 static void blockdev_deinit() {
         int ctrldev;
         
-        if (args.create_tun) {
+        if (args.create_tun && !args.keepdev) {
                 /* Open control device */
                 ctrldev = open(BDTUN_CTRLDEV, O_RDWR);
                 if (ctrldev < 0) {
@@ -436,21 +444,22 @@ static int event_loop() {
                 
                 PDEBUG("blocking on pselect\n");
                 ret = pselect(args.bdtunchdev + 1, &fds, 0, 0, 0, &orig_mask);
-                if (ret < 0 && errno != EINTR) {
-                        // Error condition, which isn't caused by signals
-                        LOG_ERROR(
-                        "event_loop: cannot pselect, error code: %d",
-                                errno);
-                        return -1;
-                } else if (!exitflag) {
-                        // Signal causing service exit
-                        break;
-                } else if (ret == 0) {
-                        // Any other signal
-                        continue;
+                if (ret < 0) {
+                        if (errno == EINTR) {
+                                // Any other signal
+                                PDEBUG("Signal\n");
+                                continue;
+                        } else {
+                                // Error condition, which isn't caused by signals
+                                LOG_ERROR(
+                                "event_loop: cannot pselect, error code: %d",
+                                        errno);
+                                return -1;
+                        }
                 }
-                
+                PDEBUG("out of pselect\n");
                 if (FD_ISSET(args.bdtunchdev, &fds)) {
+                        
                         // Read bio request from kernel-space
                         if ((ret = bdtun_read_request(args.bdtunchdev, &req))) {
                                 LOG_ERROR(

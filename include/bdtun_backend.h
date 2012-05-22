@@ -13,6 +13,7 @@ struct arguments {
         char *tunnel;
         char *devname;
         int create_tun;
+        int keepdev;
         int bdtunchdev;
         int daemon;
         int syslog;

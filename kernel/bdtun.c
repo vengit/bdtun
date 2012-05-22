@@ -79,6 +79,7 @@ struct bdtun {
         uint64_t bd_nsectors;
         int capabilities;
         struct gendisk *bd_gd;
+        struct mutex mutex;
 };
 
 /*
@@ -87,6 +88,7 @@ struct bdtun {
 
 struct bdtun_add_disk_work {
         struct gendisk *gd;
+        struct mutex *mutex;
         struct work_struct work;
 };
 
@@ -113,6 +115,8 @@ static void bdtun_do_add_disk(struct work_struct *work)
         struct bdtun_add_disk_work *w = container_of(work, struct bdtun_add_disk_work, work);
         
         add_disk(w->gd);
+        mutex_unlock(w->mutex);
+        PDEBUG("Unlocked mutex in bdtun_do_add_disk\n");
         kfree(w);
 }
 
@@ -530,6 +534,13 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
                 error = -ENOMEM;
                 goto out;
         }
+
+        mutex_init(&new->mutex);
+        if (mutex_lock_interruptible(&new->mutex)) {
+                error = -ERESTARTSYS;
+                goto out;
+        }
+
         
         /*
          * Determine device size
@@ -671,6 +682,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         // every other operation should hold the synch primitive, which relies on the existence of the device file
         INIT_WORK(&add_disk_work->work, bdtun_do_add_disk);
         add_disk_work->gd = new->bd_gd;
+        add_disk_work->mutex = &new->mutex;
         queue_work(add_disk_q, &add_disk_work->work);
         
         PDEBUG("finished setting up device %s\n", name);
@@ -689,6 +701,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
                 blk_cleanup_queue(queue);
         out_vfree:
                 vfree(new);
+                mutex_unlock(&new->mutex);
         out:
                 return error;
 }
@@ -705,38 +718,44 @@ static int bdtun_resize_k(const char *name, uint64_t size)
                 return -ENOENT;
         }
         
+        if (mutex_lock_interruptible(&dev->mutex)) {
+                return -ERESTARTSYS;
+        }
+        
         set_capacity(dev->bd_gd, size / KERNEL_SECTOR_SIZE);
         // TODO: Needs to be run AFTER add_disk, needs to synchronize, see also bdtun_create_k TODO
         ret = revalidate_disk(dev->bd_gd);
         
         if (ret) {
                 PDEBUG("could not revalidate_disk after capacity change\n");
+                mutex_unlock(&dev->mutex);
                 return ret;
         }
         
         dev->bd_size = size;
+        mutex_unlock(&dev->mutex);
         
         return 0;
 }
 
+
 static void bdtun_remove_dev(struct bdtun *dev)
 {
-        /* Destroy block devices */
-        PDEBUG("removing block device\n");
-        unregister_blkdev(dev->bd_gd->major, "bdtun");
-        blk_cleanup_queue(dev->bd_gd->queue);
-        del_gendisk(dev->bd_gd);
-        put_disk(dev->bd_gd);
-        
         /* Destroy character devices */
         PDEBUG("removing char device\n");
         unregister_chrdev_region(dev->ch_num, 1);
         cdev_del(&dev->ch_dev);
         PDEBUG("device shutdown finished\n");
         
-        // TODO: Needs to be run AFTER add_disk, needs to synchronize, see also bdtun_create_k TODO
         /* Unreg device object and class if needed */
         device_destroy(chclass, dev->ch_num);
+
+        /* Destroy block devices */
+        PDEBUG("removing block device\n");
+        unregister_blkdev(dev->bd_gd->major, "bdtun");
+        blk_cleanup_queue(dev->bd_gd->queue);
+        del_gendisk(dev->bd_gd);
+        put_disk(dev->bd_gd);
         
         module_put(THIS_MODULE);
 }
@@ -745,6 +764,7 @@ static int bdtun_remove_k(const char *name)
 {
         struct bdtun *dev;
         struct bdtun_bio_list_entry *entry;
+        struct mutex *dmutex;
         
         dev = bdtun_find_device(name);
         
@@ -752,12 +772,13 @@ static int bdtun_remove_k(const char *name)
                 PDEBUG("error removing '%s': no such device\n", name);
                 return -ENOENT;
         }
-        
+
         spin_lock(&dev->lock);
                 
         // TODO: removing should run only once, dev->removing flag could be used to check this
         if (dev->ucnt) {
                 spin_unlock(&dev->lock);
+                mutex_unlock(&dev->mutex);
                 return -EBUSY;
         }
         dev->removing = 1;
@@ -769,12 +790,19 @@ static int bdtun_remove_k(const char *name)
                 list_del(dev->bio_list.next);
                 kfree(entry);
         }
+
+        if (mutex_lock_interruptible(&dev->mutex)) {
+                return -ERESTARTSYS;
+        }
+
+        dmutex = &dev->mutex;
         
         bdtun_remove_dev(dev);
         
         /* Unlink and free device structure */
         list_del(&dev->list);
         kfree(dev);
+        mutex_unlock(dmutex);
         PDEBUG("device removed from list\n");
 
         return 0;
