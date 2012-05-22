@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.65])
-AC_INIT([bdtun], [0.0.1], [Fábián Tamás László <tamas.fabian@vengit.com>])
+AC_INIT([bdtun], [0.0.1], [Fábián Tamás László <tamas.fabian@vengit.com>, Pék János Dániel <daniel.pek@vengit.com>])
 AC_CONFIG_MACRO_DIR([m4])
 AM_INIT_AUTOMAKE
 AM_CONFIG_HEADER(include/config.h)
@@ -39,6 +39,6 @@ AC_FUNC_REALLOC
 #                   lib
 #                   util])
 
-AC_CONFIG_FILES([Makefile include/Makefile lib/Makefile lib/bdtun.pc lib/bdtun_backend.pc util/Makefile example/Makefile kernel/Makefile])
+AC_CONFIG_FILES([Makefile include/Makefile lib/Makefile lib/bdtun.pc util/Makefile kernel/Makefile])
 
 AC_OUTPUT
