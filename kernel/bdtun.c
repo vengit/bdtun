@@ -578,7 +578,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         if (queue == NULL) {
                 PDEBUG("Could not allocate request queue\n");
                 error = -ENOMEM;
-                goto out_vfree;
+                goto out_kfree;
         }
         
         PDEBUG("setting up queue parameters\n");
@@ -699,8 +699,8 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
                 unregister_blkdev(bd_major, "bdtun");
         out_cleanup_queue:
                 blk_cleanup_queue(queue);
-        out_vfree:
-                vfree(new);
+        out_kfree:
+                kfree(new);
                 mutex_unlock(&new->mutex);
         out:
                 return error;
