@@ -458,19 +458,22 @@ unsigned int bdtunch_poll(struct file *filp, poll_table *wait) {
 int bdtunch_mmap_fault(
         struct vm_area_struct *vma, struct vm_fault *vmf)
 {
-        unsigned long offset;
-        unsigned long pageno;
         struct page *page = NULL;
         struct bdtun *dev = (struct bdtun *)vma->vm_private_data;
+        struct bdtun_bio_list_entry *entry;
 
         // Get current bio
+        // We don't need lock here, because we always have at least
+        // 1 bio in queue, and it can't shrunk.
+        entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
 
-        spin_lock(&dev->bio_list_lock);
-        spin_unlock(&dev->bio_list_lock);
-
-        if (vmf->pgoff > 0) {
+        // Check page offset validity
+        if (vmf->pgoff > entry->bio->bi_vcnt) {
                 return VM_FAULT_ERROR;
 		}
+
+        // We assume PAGE_SIZE aligned, n*PAGE_SIZE IO
+        page = entry->bio->bi_io_vec[vmf->pgoff].bv_page;
 
         // Increment usage count
         get_page(page);
