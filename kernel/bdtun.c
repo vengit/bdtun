@@ -36,6 +36,7 @@ struct bdtun_bio_list_entry {
         struct list_head list;
         struct bio *bio;
         unsigned long start_time;
+        unsigned char is_mmapped;
         /* TODO: start_time mimics the similarly named field
          * in a request struct. This may be inaccurate. Check
          * where this field gets propagated to see if this is OK.
@@ -364,9 +365,11 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
 
         /* Validate request size */
         if (count < 1 ||
-            (bio_data_dir(entry->bio) == READ && !buf[0] && count != entry->bio->bi_size + 1) ||
-            (bio_data_dir(entry->bio) == READ &&  buf[0] && count != 1) ||
-            (bio_data_dir(entry->bio) == WRITE && count != 1)) {
+            (!entry->is_mmapped && bio_data_dir(entry->bio) == READ && !buf[0] && count != entry->bio->bi_size + 1) ||
+            (bio_data_dir(entry->bio) == WRITE && count != 1) ||
+            (entry->is_mmapped && count != 1) ||
+            (buf[0] && count != 1)
+        ) {
                 PDEBUG("invalid request size from user returning -EIO and resetting bio.\n");
                 return -EIO;
         }
@@ -394,8 +397,9 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         
         buf++;
         
-        /* Copy the data into the bio */
-        if (bio_data_dir(entry->bio) == READ) {
+        /* Check if data needts to be copied from buf */
+        if (!entry->is_mmapped && bio_data_dir(entry->bio) == READ) {
+                /* Yes, data is in buf, copy it into the bio */
                 bio_for_each_segment(bvec, entry->bio, i) {
                         void *kaddr = kmap(bvec->bv_page);
                         // TODO: too expensive
@@ -497,6 +501,7 @@ static struct vm_operations_struct bdtunch_mmap_ops = {
  */
 static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
 {
+        struct bdtun *dev = (struct bdtun *)filp->private_data;
         unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
 
         if (offset >= __pa(high_memory) || (filp->f_flags & O_SYNC)) {
@@ -504,7 +509,9 @@ static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
         }
         vma->vm_flags |= VM_RESERVED;
         vma->vm_ops = &bdtunch_mmap_ops;
-        vma->vm_private_data = filp->private_data;
+        vma->vm_private_data = (void *)dev;
+
+        list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list)->is_mmapped = 1;
 
         return 0;
 }

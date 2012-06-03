@@ -48,6 +48,7 @@ struct bdtun_txreq {
         unsigned long flags;
         unsigned long offset;
         unsigned long size;
+        unsigned char is_mmapped;
         char *buf;
 };
 

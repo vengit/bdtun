@@ -45,6 +45,18 @@ int bdtun_read_request(int fd, struct bdtun_txreq *req) {
 }
 
 /*
+ * Get memory mapped area to bio
+ * 
+ * This will flip a flag in the bdtun_txreq structure that
+ * makes bdtun_complete_request not to send data when completing
+ * a read request. You have to populate the mmapped area
+ * before you call bdtun_complete_request.
+ */
+int bdtun_mmap_request(int fd, struct bdtun_txreq *req) {
+    req->is_mmapped = 1;
+}
+
+/*
  * Tell the driver that the bio complete
  * 
  * If it was a read request, the buf member must contain the
@@ -58,7 +70,7 @@ int bdtun_complete_request(int fd, struct bdtun_txreq *req)
         req->buf--;
         req->buf[0] = 0;
         
-        if (req->flags & REQ_WRITE) {
+        if (req->flags & REQ_WRITE || req->is_mmapped) {
                 PDEBUG("Completing write request by completion byte\n");
                 res = write(fd, req->buf, 1);
         } else {
