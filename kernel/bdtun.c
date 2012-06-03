@@ -464,19 +464,19 @@ int bdtunch_mmap_fault(
         struct bdtun *dev = (struct bdtun *)vma->vm_private_data;
 
         // Get current bio
-        // Which page should we get?
-        offset = (unsigned long)vmf->virtual_address - vma->vm_start;
-        pageno =  offset >> PAGE_SHIFT;
 
-        if (pageno > 0) {
-                return VM_FAULT_SIGBUS;
+        spin_lock(&dev->bio_list_lock);
+        spin_unlock(&dev->bio_list_lock);
+
+        if (vmf->pgoff > 0) {
+                return VM_FAULT_ERROR;
 		}
-        
+
         // Increment usage count
         get_page(page);
 
         vmf->page = page;
-        
+
         return 0;
 }
 
