@@ -109,7 +109,7 @@ int bdtun_complete_request(int fd, struct bdtun_txreq *req)
         req->buf--;
         req->buf[0] = 0;
         
-        if (req->flags & REQ_WRITE) {
+        if (req->flags & REQ_WRITE || req->is_mmapped) {
                 PDEBUG("Completing write request by completion byte\n");
                 res = write(fd, req->buf, 1);
         } else {
