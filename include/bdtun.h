@@ -106,6 +106,8 @@ struct bdtun_ctrl_command {
 
 int bdtun_read_request(int fd, struct bdtun_txreq *req);
 
+int bdtun_mmap_request(int fd, struct bdtun_txreq *req);
+
 int bdtun_complete_request(int fd, struct bdtun_txreq *req);
 
 int bdtun_fail_request(int fd, struct bdtun_txreq *req);

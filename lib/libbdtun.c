@@ -5,8 +5,38 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/mman.h>
 
 #include "bdtun.h"
+
+/*
+ * Opens a connection to a tunnel
+ */
+int bdtun_open(struct bdtun_txreq **req, char *tunnel) {
+        int fd = open(tunnel, O_RDWR);
+
+        if (fd < 0) {
+                PDEBUG("Invalid filename was given");
+                return -ENOENT;
+        }
+
+        req = (struct bdtun_txreq)malloc(sizeof(struct bdtun_txreq));
+
+        if (req == NULL) {
+                PDEBUG("Unable to allocate memory to request structure");
+                return -ENOMEM;
+        }
+
+        return 0;
+}
+
+/*
+ * Closes the connection to the tunnel
+ */
+int bdtun_close(struct bdtun_txreq *req) {
+        close(req->fd)
+        free(req);
+}
 
 /*
  * Read a transfer request form a tunnel character device
@@ -41,6 +71,27 @@ int bdtun_read_request(int fd, struct bdtun_txreq *req) {
                 }
         }
         
+        return 0;
+}
+
+/*
+ * Read transfer request and mmap the current bio
+ */
+int bdtun_mmap_request(int fd, struct bdtun_txreq *req) {
+        ssize_t res;
+        size_t bufsize = 0;
+
+        res = read(fd, req, BDTUN_TXREQ_HEADER_SIZE);
+        if (res < 0) {
+                return res;
+        }
+
+        req->buf = mmap(0, res, req->flags & REQ_WRITE ? PROT_READ : PROT_WRITE, MAP_SHARED, fd, 0);
+        if (req->buf < 0) {
+                PDEBUG("Could not mmap bio.");
+                return req->buf;
+        }
+
         return 0;
 }
 
