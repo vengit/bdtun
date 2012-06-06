@@ -10,35 +10,6 @@
 #include "bdtun.h"
 
 /*
- * Opens a connection to a tunnel
- */
-int bdtun_open(struct bdtun_txreq **req, char *tunnel) {
-        int fd = open(tunnel, O_RDWR);
-
-        if (fd < 0) {
-                PDEBUG("Invalid filename was given");
-                return -ENOENT;
-        }
-
-        req = (struct bdtun_txreq)malloc(sizeof(struct bdtun_txreq));
-
-        if (req == NULL) {
-                PDEBUG("Unable to allocate memory to request structure");
-                return -ENOMEM;
-        }
-
-        return 0;
-}
-
-/*
- * Closes the connection to the tunnel
- */
-int bdtun_close(struct bdtun_txreq *req) {
-        close(req->fd)
-        free(req);
-}
-
-/*
  * Read a transfer request form a tunnel character device
  */
 int bdtun_read_request(int fd, struct bdtun_txreq *req) {

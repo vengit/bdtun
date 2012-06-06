@@ -472,7 +472,7 @@ int bdtunch_mmap_fault(
         entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
 
         // Check page offset validity
-        if (vmf->pgoff > entry->bio->bi_vcnt) {
+        if (vmf->pgoff >= entry->bio->bi_vcnt) {
                 return VM_FAULT_ERROR;
 		}
 
