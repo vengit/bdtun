@@ -62,6 +62,7 @@ int bdtun_mmap_request(int fd, struct bdtun_txreq *req) {
                 PDEBUG("Could not mmap bio.");
                 return req->buf;
         }
+        req->is_mmapped = 1;
 
         return 0;
 }
