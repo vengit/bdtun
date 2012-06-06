@@ -41,6 +41,7 @@ int bdtun_read_request(int fd, struct bdtun_txreq *req) {
                         return res;
                 }
         }
+        req->is_mmapped = 0;
         
         return 0;
 }
@@ -48,7 +49,8 @@ int bdtun_read_request(int fd, struct bdtun_txreq *req) {
 /*
  * Read transfer request and mmap the current bio
  */
-int bdtun_mmap_request(int fd, struct bdtun_txreq *req) {
+int bdtun_mmap_request(int fd, struct bdtun_txreq *req)
+{
         ssize_t res;
         size_t bufsize = 0;
 

@@ -162,6 +162,7 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
 
         new->start_time = jiffies;
         new->bio = bio;
+        new->is_mmapped = 0;
         
         spin_lock(&dev->bio_list_lock);
         list_add_tail(&new->list, &dev->bio_list);
@@ -371,6 +372,14 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
             (buf[0] && count != 1)
         ) {
                 PDEBUG("invalid request size from user returning -EIO and resetting bio.\n");
+                PDEBUG(
+                        "is_mmapped: %d, read? %d, buf[0]: %d, count: %d, bio->bi_size: %d",
+                        entry->is_mmapped,
+                        bio_data_dir(entry->bio) == READ,
+                        buf[0],
+                        count,
+                        entry->bio->bi_size
+                );
                 return -EIO;
         }
         

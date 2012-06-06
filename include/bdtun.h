@@ -52,7 +52,8 @@ struct bdtun_txreq {
         char *buf;
 };
 
-#define BDTUN_TXREQ_HEADER_SIZE sizeof(struct bdtun_txreq)-sizeof(char *)
+// TODO clean this txreq thing up
+#define BDTUN_TXREQ_HEADER_SIZE sizeof(struct bdtun_txreq)-sizeof(char *)-sizeof(char)
 
 #define BDTUN_FLUSH   1
 #define BDTUN_FUA     2
