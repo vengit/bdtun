@@ -338,6 +338,13 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 }
         } else {
                 PDEBUG("request size is invalid, returning -EIO\n");
+                PDEBUG(
+                        "count: %d, BDTUN_TXREQ_HEADER_SIZE: %d, write? %d, bio->bi_size: %d",
+                        count,
+                        BDTUN_TXREQ_HEADER_SIZE,
+                        bio_data_dir(entry->bio) == WRITE,
+                        entry->bio->bi_size
+                );
                 return -EIO;
         }
 
