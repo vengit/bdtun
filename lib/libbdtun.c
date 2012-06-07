@@ -84,7 +84,7 @@ int bdtun_complete_request(int fd, struct bdtun_txreq *req)
         if (req->is_mmapped) {
                 char buf = 0;
                 PDEBUG("Req was mmapped, completing write request by completion byte\n");
-                res = write(fd, buf, 1);
+                res = write(fd, &buf, 1);
                 if (res < 0) {
                         return res;
                 }
