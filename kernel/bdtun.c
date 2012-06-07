@@ -497,6 +497,9 @@ int bdtunch_mmap_fault(
         // We assume PAGE_SIZE aligned, n*PAGE_SIZE IO
         page = entry->bio->bi_io_vec[vmf->pgoff].bv_page;
 
+        // This may seriously blow things up.
+        unlock_page(page);
+
         // Increment usage count
         get_page(page);
 
