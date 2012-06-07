@@ -478,7 +478,7 @@ unsigned int bdtunch_poll(struct file *filp, poll_table *wait) {
 int bdtunch_mmap_fault(
         struct vm_area_struct *vma, struct vm_fault *vmf)
 {
-        PDEBUG("Running mmap_fault");
+        PDEBUG("Running mmap_fault, offset %d", vmf->pgoff);
         struct page *page = NULL;
         struct bdtun *dev = (struct bdtun *)vma->vm_private_data;
         struct bdtun_bio_list_entry *entry;
