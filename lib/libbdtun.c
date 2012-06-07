@@ -79,24 +79,37 @@ int bdtun_mmap_request(int fd, struct bdtun_txreq *req)
 int bdtun_complete_request(int fd, struct bdtun_txreq *req)
 {
         int res;
-        
+
         /* Zero byte means success */
-        req->buf--;
-        req->buf[0] = 0;
-        
-        if (req->flags & REQ_WRITE || req->is_mmapped) {
-                PDEBUG("Completing write request by completion byte\n");
-                res = write(fd, req->buf, 1);
+        if (req->is_mmapped) {
+                char buf = 0;
+                PDEBUG("Req was mmapped, completing write request by completion byte\n");
+                res = write(fd, buf, 1);
+                if (res < 0) {
+                        return res;
+                }
+                res = munmap(req->buf, req->size);
+                if (res < 0) {
+                        return res;
+                }
         } else {
-                PDEBUG("Completing read request by sending data\n");
-                res = write(fd, req->buf, req->size+1);
+                req->buf--;
+                req->buf[0] = 0;
+
+                if (req->flags & REQ_WRITE) {
+                        PDEBUG("Completing write request by completion byte\n");
+                        res = write(fd, req->buf, 1);
+                } else {
+                        PDEBUG("Completing read request by sending data\n");
+                        res = write(fd, req->buf, req->size+1);
+                }
+
+                req->buf++;
+                if (res < 0) {
+                        return res;
+                }
         }
-        
-        req->buf++;
-        
-        if (res < 0) {
-                return res;
-        }
+
         return 0;
 }
 

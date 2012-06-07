@@ -478,6 +478,7 @@ unsigned int bdtunch_poll(struct file *filp, poll_table *wait) {
 int bdtunch_mmap_fault(
         struct vm_area_struct *vma, struct vm_fault *vmf)
 {
+        PDEBUG("Running mmap_fault");
         struct page *page = NULL;
         struct bdtun *dev = (struct bdtun *)vma->vm_private_data;
         struct bdtun_bio_list_entry *entry;
@@ -490,6 +491,7 @@ int bdtunch_mmap_fault(
         // Check page offset validity
         if (vmf->pgoff >= entry->bio->bi_vcnt) {
                 return VM_FAULT_ERROR;
+                PDEBUG("mmap_fault error");
 		}
 
         // We assume PAGE_SIZE aligned, n*PAGE_SIZE IO
@@ -499,6 +501,8 @@ int bdtunch_mmap_fault(
         get_page(page);
 
         vmf->page = page;
+
+        PDEBUG("mmap_fault ok");
 
         return 0;
 }
