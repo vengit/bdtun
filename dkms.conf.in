@@ -1,0 +1,10 @@
+MAKE="make -C kernel/ KDIR=/lib/modules/$kernelver/build"
+CLEAN="make -C kernel/ 	clean"
+BUILT_MODULE_NAME="bdtun"
+BUILT_MODULE_LOCATION="kernel/"
+DEST_MODULE_LOCATION="/extra"
+PACKAGE_NAME="bdtun"
+PACKAGE_VERSION="@VERSION@"
+REMAKE_INITRD="yes"
+AUTOINSTALL="yes"
+

@@ -11,22 +11,9 @@ all: modules
 modules:
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
 
-install: module
+install: modules
 	$(MAKE) -C $(KDIR) M=$(PWD) modules_install
 	depmod -a
-
-dkms-copy:
-	mkdir -p /usr/src/bdtun-@VERSION@
-	cp -R . /usr/src/bdtun-@VERSION@
-
-dkms-add:
-	dkms add -m bdtun -v @VERSION@
-
-dkms-install:
-	dkms install -m bdtun -v @VERSION@
-
-dkms-uninstall:
-	dkms uninstall -m bdtun -v @VERSION@
 
 uninstall:
 	rm -f $(KDIR)/extra/$(koname)
