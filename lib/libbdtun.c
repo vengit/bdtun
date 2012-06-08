@@ -60,7 +60,7 @@ int bdtun_mmap_request(int fd, struct bdtun_txreq *req)
                 return res;
         }
 
-        req->buf = mmap(0, res, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        req->buf = mmap(0, req->size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (req->buf < 0) {
                 PDEBUG("Could not mmap bio.");
                 return req->buf;
