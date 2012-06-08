@@ -1,12 +1,6 @@
 #ifndef __BDTUN_H
 #define __BDTUN_H
 
-#include <linux/fs.h>
-
-#ifndef REQ_WRITE
-#define REQ_WRITE 1 /* TODO: get autoconf to find this out */
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -48,13 +42,16 @@ struct bdtun_txreq {
         unsigned long flags;
         unsigned long offset;
         unsigned long size;
+        // This is where header ends
         unsigned char is_mmapped;
         char *buf;
 };
 
-// TODO clean this txreq thing up
 #define BDTUN_TXREQ_HEADER_SIZE sizeof(unsigned long)*3
 
+/*
+ * Device capabilities
+ */
 #define BDTUN_FLUSH   1
 #define BDTUN_FUA     2
 #define BDTUN_DISCARD 4

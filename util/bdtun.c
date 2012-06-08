@@ -45,14 +45,14 @@ struct arguments {
 static struct argp_option options[] = {
 {0, 0, 0, 0, "Informational options", -1},
 
-{0,        0,          0, 0, "Commands",                0},
-{"create", KEY_CREATE, 0, 0, "create a tunnel",         0},
-{"remove", KEY_REMOVE, 0, 0, "remove a tunnel",         0},
-{"resize", KEY_RESIZE, 0, 0, "resize the block device", 0},
-{"list",   KEY_LIST,   0, 0, "list existing tunnels",   0},
-{"info",   KEY_INFO,   0, 0, "get info on a tunnel",    0},
+{0,        0,          0, 0, "Commands",                           0},
+{"create", KEY_CREATE, 0, 0, "create a tunnel (with -bns)",        0},
+{"remove", KEY_REMOVE, 0, 0, "remove a tunnel (with -n)",          0},
+{"resize", KEY_RESIZE, 0, 0, "resize the block device (with -ns)", 0},
+{"list",   KEY_LIST,   0, 0, "list existing tunnels",              0},
+{"info",   KEY_INFO,   0, 0, "get info on a tunnel (with -n)",     0},
 
-{0,             0,           0,           0, "Create options",                    1},
+{0,             0,           0,           0, "Options",                           1},
 {"name",        KEY_NAME,    "NAME",      0, "name of tunnel",                    1},
 {"size",        KEY_SIZE,    "SIZE",      0, "block device size in bytes",        1},
 {"block-size",  KEY_BSIZE,   "BLOCKSIZE", 0, "device block size in bytes",        1},
@@ -60,16 +60,6 @@ static struct argp_option options[] = {
 {"req-fua",     KEY_FUA,     0,           0, "support REQ_FUA",                   1},
 {"req-discard", KEY_DISCARD, 0,           0, "support REQ_DISCARD ",              1},
 {"req-secure",  KEY_SECURE,  0,           0, "support secure discard (REQ_SAFE)", 1},
-
-{0,      0,        0,      0, "Resize options",             2},
-{"name", KEY_NAME, "NAME", 0, "name of tunnel",             2},
-{"size", KEY_SIZE, "SIZE", 0, "block device size in bytes", 2},
-
-{0,                0,         0,           0, "Remove options",             3},
-{"name",           KEY_NAME,  "NAME",      0, "name of tunnel",             3},
-
-{0,      0,        0,      0, "Info options",   4},
-{"name", KEY_NAME, "NAME", 0, "name of tunnel", 4},
 
 {0}
 };
