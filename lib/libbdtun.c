@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/mman.h>
 
 #include "bdtun.h"
 
@@ -15,7 +16,8 @@ int bdtun_read_request(int fd, struct bdtun_txreq *req) {
         ssize_t res;
         size_t bufsize = 0;
         static char *buf = NULL;
-        
+
+        PDEBUG("BDTUN_TXREQ_HEADER_SIZE: %d", BDTUN_TXREQ_HEADER_SIZE);
         res = read(fd, req, BDTUN_TXREQ_HEADER_SIZE);
         if (res < 0) {
                 return res;
@@ -40,7 +42,31 @@ int bdtun_read_request(int fd, struct bdtun_txreq *req) {
                         return res;
                 }
         }
+        req->is_mmapped = 0;
         
+        return 0;
+}
+
+/*
+ * Read transfer request and mmap the current bio
+ */
+int bdtun_mmap_request(int fd, struct bdtun_txreq *req)
+{
+        ssize_t res;
+        size_t bufsize = 0;
+
+        res = read(fd, req, BDTUN_TXREQ_HEADER_SIZE);
+        if (res < 0) {
+                return res;
+        }
+
+        req->buf = mmap(0, req->size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (req->buf < 0) {
+                PDEBUG("Could not mmap bio.");
+                return req->buf;
+        }
+        req->is_mmapped = 1;
+
         return 0;
 }
 
@@ -53,24 +79,37 @@ int bdtun_read_request(int fd, struct bdtun_txreq *req) {
 int bdtun_complete_request(int fd, struct bdtun_txreq *req)
 {
         int res;
-        
+
         /* Zero byte means success */
-        req->buf--;
-        req->buf[0] = 0;
-        
-        if (req->flags & REQ_WRITE) {
-                PDEBUG("Completing write request by completion byte\n");
-                res = write(fd, req->buf, 1);
+        if (req->is_mmapped) {
+                char buf = 0;
+                PDEBUG("Req was mmapped, completing request by completion byte\n");
+                res = munmap(req->buf, req->size);
+                if (res < 0) {
+                        return res;
+                }
+                res = write(fd, &buf, 1);
+                if (res < 0) {
+                        return res;
+                }
         } else {
-                PDEBUG("Completing read request by sending data\n");
-                res = write(fd, req->buf, req->size+1);
+                req->buf--;
+                req->buf[0] = 0;
+
+                if (req->flags & REQ_WRITE) {
+                        PDEBUG("Completing write request by completion byte\n");
+                        res = write(fd, req->buf, 1);
+                } else {
+                        PDEBUG("Completing read request by sending data\n");
+                        res = write(fd, req->buf, req->size+1);
+                }
+
+                req->buf++;
+                if (res < 0) {
+                        return res;
+                }
         }
-        
-        req->buf++;
-        
-        if (res < 0) {
-                return res;
-        }
+
         return 0;
 }
 

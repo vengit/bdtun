@@ -20,6 +20,7 @@
 #include <linux/fs.h>
 #include <linux/poll.h>
 #include <linux/version.h>
+#include <linux/mm.h>
 
 #include "../include/bdtun.h"
 
@@ -35,6 +36,7 @@ struct bdtun_bio_list_entry {
         struct list_head list;
         struct bio *bio;
         unsigned long start_time;
+        unsigned char is_mmapped;
         /* TODO: start_time mimics the similarly named field
          * in a request struct. This may be inaccurate. Check
          * where this field gets propagated to see if this is OK.
@@ -160,6 +162,7 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
 
         new->start_time = jiffies;
         new->bio = bio;
+        new->is_mmapped = 0;
         
         spin_lock(&dev->bio_list_lock);
         list_add_tail(&new->list, &dev->bio_list);
@@ -335,6 +338,13 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 }
         } else {
                 PDEBUG("request size is invalid, returning -EIO\n");
+                PDEBUG(
+                        "count: %d, BDTUN_TXREQ_HEADER_SIZE: %d, write? %d, bio->bi_size: %d",
+                        count,
+                        BDTUN_TXREQ_HEADER_SIZE,
+                        bio_data_dir(entry->bio) == WRITE,
+                        entry->bio->bi_size
+                );
                 return -EIO;
         }
 
@@ -363,10 +373,20 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
 
         /* Validate request size */
         if (count < 1 ||
-            (bio_data_dir(entry->bio) == READ && !buf[0] && count != entry->bio->bi_size + 1) ||
-            (bio_data_dir(entry->bio) == READ &&  buf[0] && count != 1) ||
-            (bio_data_dir(entry->bio) == WRITE && count != 1)) {
+            (!entry->is_mmapped && bio_data_dir(entry->bio) == READ && !buf[0] && count != entry->bio->bi_size + 1) ||
+            (bio_data_dir(entry->bio) == WRITE && count != 1) ||
+            (entry->is_mmapped && count != 1) ||
+            (buf[0] && count != 1)
+        ) {
                 PDEBUG("invalid request size from user returning -EIO and resetting bio.\n");
+                PDEBUG(
+                        "is_mmapped: %d, read? %d, buf[0]: %d, count: %d, bio->bi_size: %d",
+                        entry->is_mmapped,
+                        bio_data_dir(entry->bio) == READ,
+                        buf[0],
+                        count,
+                        entry->bio->bi_size
+                );
                 return -EIO;
         }
         
@@ -393,8 +413,9 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         
         buf++;
         
-        /* Copy the data into the bio */
-        if (bio_data_dir(entry->bio) == READ) {
+        /* Check if data needts to be copied from buf */
+        if (!entry->is_mmapped && bio_data_dir(entry->bio) == READ) {
+                /* Yes, data is in buf, copy it into the bio */
                 bio_for_each_segment(bvec, entry->bio, i) {
                         void *kaddr = kmap(bvec->bv_page);
                         // TODO: too expensive
@@ -451,14 +472,80 @@ unsigned int bdtunch_poll(struct file *filp, poll_table *wait) {
 }
 
 /*
- * Operations on character device
+ * Handle page faults of mmapped memory range. This function is used
+ * to read / write data from / to bio-s.
+ */
+int bdtunch_mmap_fault(
+        struct vm_area_struct *vma, struct vm_fault *vmf)
+{
+        PDEBUG("Running mmap_fault, offset %d", vmf->pgoff);
+        struct page *page = NULL;
+        struct bdtun *dev = (struct bdtun *)vma->vm_private_data;
+        struct bdtun_bio_list_entry *entry;
+
+        // Get current bio
+        // We don't need lock here, because we always have at least
+        // 1 bio in queue, and it can't shrink.
+        entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
+
+        // Check page offset validity
+        if (vmf->pgoff >= entry->bio->bi_vcnt) {
+                return VM_FAULT_ERROR;
+                PDEBUG("mmap_fault error");
+		}
+
+        // We assume PAGE_SIZE aligned, n*PAGE_SIZE IO
+        page = entry->bio->bi_io_vec[vmf->pgoff].bv_page;
+
+        // Increment usage count
+        get_page(page);
+
+        vmf->page = page;
+
+        PDEBUG("mmap_fault ok");
+
+        return VM_FAULT_LOCKED;
+}
+
+/*
+ * Operations structure used with mmapped virtual memory areas contains
+ * a reference to the nopage function definied above.
+ */
+static struct vm_operations_struct bdtunch_mmap_ops = {
+        .fault = bdtunch_mmap_fault
+};
+
+/*
+ * mmap call handler. Sets up the memory mapping to the current bio
+ * according to the nopage method.
+ */
+static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
+{
+        struct bdtun *dev = (struct bdtun *)filp->private_data;
+        unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
+
+        if (offset >= __pa(high_memory) || (filp->f_flags & O_SYNC)) {
+                vma->vm_flags |= VM_IO;
+        }
+        vma->vm_flags |= VM_RESERVED;
+        vma->vm_ops = &bdtunch_mmap_ops;
+        vma->vm_private_data = (void *)dev;
+
+        list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list)->is_mmapped = 1;
+
+        return 0;
+}
+
+/*
+ * Operations on the tunnel's character device
  */
 static struct file_operations bdtunch_ops = {
         .read    = bdtunch_read,
         .write   = bdtunch_write,
         .open    = bdtunch_open,
         .release = bdtunch_release,
-        .poll    = bdtunch_poll
+        .poll    = bdtunch_poll,
+        .mmap    = bdtunch_mmap
 };
 
 /*

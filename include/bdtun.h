@@ -48,10 +48,12 @@ struct bdtun_txreq {
         unsigned long flags;
         unsigned long offset;
         unsigned long size;
+        unsigned char is_mmapped;
         char *buf;
 };
 
-#define BDTUN_TXREQ_HEADER_SIZE sizeof(struct bdtun_txreq)-sizeof(char *)
+// TODO clean this txreq thing up
+#define BDTUN_TXREQ_HEADER_SIZE sizeof(unsigned long)*3
 
 #define BDTUN_FLUSH   1
 #define BDTUN_FUA     2
@@ -105,6 +107,8 @@ struct bdtun_ctrl_command {
 #define BDTUN_COMM_RESIZE_SIZE sizeof(struct bdtun_ctrl_command)
 
 int bdtun_read_request(int fd, struct bdtun_txreq *req);
+
+int bdtun_mmap_request(int fd, struct bdtun_txreq *req);
 
 int bdtun_complete_request(int fd, struct bdtun_txreq *req);
 
