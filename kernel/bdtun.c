@@ -485,7 +485,7 @@ int bdtunch_mmap_fault(
 
         // Get current bio
         // We don't need lock here, because we always have at least
-        // 1 bio in queue, and it can't shrunk.
+        // 1 bio in queue, and it can't shrink.
         entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
 
         // Check page offset validity
