@@ -865,7 +865,6 @@ static int bdtun_remove_k(const char *name)
         // TODO: removing should run only once, dev->removing flag could be used to check this
         if (dev->ucnt) {
                 spin_unlock(&dev->lock);
-                mutex_unlock(&dev->mutex);
                 return -EBUSY;
         }
         dev->removing = 1;
