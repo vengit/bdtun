@@ -43,6 +43,7 @@ lib/Makefile.in
 util/Makefile.in
 include/config.h.in
 include/config.h.in~
+kernel/dkms.conf
 
 Makefile
 example/Makefile
