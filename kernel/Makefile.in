@@ -3,7 +3,7 @@ EXTRA_CFLAGS = @CFLAGS@
 modname = bdtun
 koname = $(modname).ko
 obj-m := $(modname).o
-KDIR := @KDIR@
+KDIR := /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
 
 all: modules

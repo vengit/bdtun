@@ -16,8 +16,6 @@ else
     CFLAGS="-Wall -O2"
 fi
 
-KDIR=/lib/modules/`uname -r`/build
-
 # Checks for programs.
 AC_PROG_CC
 AC_PROG_LIBTOOL
@@ -25,7 +23,7 @@ AC_PROG_LIBTOOL
 # Checks for libraries.
 
 # Checks for header files.
-AC_CHECK_HEADERS([fcntl.h inttypes.h stdlib.h unistd.h string.h argp.h linux/blk_types.h])
+AC_CHECK_HEADERS([fcntl.h inttypes.h stdlib.h unistd.h string.h argp.h])
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_TYPE_SIZE_T

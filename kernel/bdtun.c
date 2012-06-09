@@ -478,10 +478,11 @@ unsigned int bdtunch_poll(struct file *filp, poll_table *wait) {
 int bdtunch_mmap_fault(
         struct vm_area_struct *vma, struct vm_fault *vmf)
 {
-        PDEBUG("Running mmap_fault, offset %d", vmf->pgoff);
         struct page *page = NULL;
         struct bdtun *dev = (struct bdtun *)vma->vm_private_data;
         struct bdtun_bio_list_entry *entry;
+
+        PDEBUG("Running mmap_fault, offset %d", vmf->pgoff);
 
         // Get current bio
         // We don't need lock here, because we always have at least
@@ -687,7 +688,10 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
                 blk_queue_discard(queue);
         }
         if (capabilities & BDTUN_SECURE) {
-                blk_queue_secdiscard(queue);
+                //blk_queue_secdiscard(queue);
+                // Supress 'computed value is not used' warning
+                test_bit(QUEUE_FLAG_DISCARD, &(queue)->queue_flags);
+                test_bit(QUEUE_FLAG_SECDISCARD, &(queue)->queue_flags);
         }
         
         /*

@@ -6,7 +6,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
-#include <linux/blk_types.h>
 
 #include "bdtun.h"
 
@@ -18,7 +17,7 @@ int bdtun_read_request(int fd, struct bdtun_txreq *req) {
         size_t bufsize = 0;
         static char *buf = NULL;
 
-        PDEBUG("BDTUN_TXREQ_HEADER_SIZE: %d", BDTUN_TXREQ_HEADER_SIZE);
+        PDEBUG("BDTUN_TXBDTUN_REQ_HEADER_SIZE: %d", BDTUN_TXBDTUN_REQ_HEADER_SIZE);
         res = read(fd, req, BDTUN_TXREQ_HEADER_SIZE);
         if (res < 0) {
                 return res;
@@ -36,7 +35,7 @@ int bdtun_read_request(int fd, struct bdtun_txreq *req) {
         
         req->buf = buf + 1;
         
-        if (req->flags & REQ_WRITE) {
+        if (req->flags & BDTUN_REQ_WRITE) {
                 PDEBUG("Write request, getting data from kernel\n");
                 res = read(fd, req->buf, req->size);
                 if (res < 0) {
@@ -54,7 +53,6 @@ int bdtun_read_request(int fd, struct bdtun_txreq *req) {
 int bdtun_mmap_request(int fd, struct bdtun_txreq *req)
 {
         ssize_t res;
-        size_t bufsize = 0;
 
         res = read(fd, req, BDTUN_TXREQ_HEADER_SIZE);
         if (res < 0) {
@@ -97,7 +95,7 @@ int bdtun_complete_request(int fd, struct bdtun_txreq *req)
                 req->buf--;
                 req->buf[0] = 0;
 
-                if (req->flags & REQ_WRITE) {
+                if (req->flags & BDTUN_REQ_WRITE) {
                         PDEBUG("Completing write request by completion byte\n");
                         res = write(fd, req->buf, 1);
                 } else {
