@@ -266,6 +266,45 @@ static int bdtunch_release(struct inode *inode, struct file *filp)
 }
 
 /*
+ * Translates the flags stored in struct bio's bi_rw field
+ * This is needed to ensure that the userspace will be compatible
+ * with the kernel module even if the kernel is changed and the
+ * module is recompiled.
+ */
+static unsigned long bdtun_translate_bio_rw(unsigned long rw) {
+        return
+        (rw & REQ_WRITE ? BDTUN_REQ_WRITE : 0 ) |
+        (rw & REQ_FAILFAST_DEV ? BDTUN_REQ_FAILFAST_DEV : 0 ) |
+        (rw & REQ_FAILFAST_TRANSPORT ? BDTUN_REQ_FAILFAST_TRANSPORT : 0 ) |
+        (rw & REQ_FAILFAST_DRIVER ? BDTUN_REQ_FAILFAST_DRIVER : 0 ) |
+        (rw & REQ_SYNC ? BDTUN_REQ_SYNC : 0 ) |
+        (rw & REQ_META ? BDTUN_REQ_META : 0 ) |
+        (rw & REQ_PRIO ? BDTUN_REQ_PRIO : 0 ) |
+        (rw & REQ_DISCARD ? BDTUN_REQ_DISCARD : 0 ) |
+        (rw & REQ_NOIDLE ? BDTUN_REQ_NOIDLE : 0 ) |
+        (rw & REQ_RAHEAD ? BDTUN_REQ_RAHEAD : 0 ) |
+        (rw & REQ_THROTTLED ? BDTUN_REQ_THROTTLED : 0 ) |
+        (rw & REQ_SORTED ? BDTUN_REQ_SORTED : 0 ) |
+        (rw & REQ_SOFTBARRIER ? BDTUN_REQ_SOFTBARRIER : 0 ) |
+        (rw & REQ_FUA ? BDTUN_REQ_FUA : 0 ) |
+        (rw & REQ_NOMERGE ? BDTUN_REQ_NOMERGE : 0 ) |
+        (rw & REQ_STARTED ? BDTUN_REQ_STARTED : 0 ) |
+        (rw & REQ_DONTPREP ? BDTUN_REQ_DONTPREP : 0 ) |
+        (rw & REQ_QUEUED ? BDTUN_REQ_QUEUED : 0 ) |
+        (rw & REQ_ELVPRIV ? BDTUN_REQ_ELVPRIV : 0 ) |
+        (rw & REQ_FAILED ? BDTUN_REQ_FAILED : 0 ) |
+        (rw & REQ_QUIET ? BDTUN_REQ_QUIET : 0 ) |
+        (rw & REQ_PREEMPT ? BDTUN_REQ_PREEMPT : 0 ) |
+        (rw & REQ_ALLOCED ? BDTUN_REQ_ALLOCED : 0 ) |
+        (rw & REQ_COPY_USER ? BDTUN_REQ_COPY_USER : 0 ) |
+        (rw & REQ_FLUSH ? BDTUN_REQ_FLUSH : 0 ) |
+        (rw & REQ_FLUSH_SEQ ? BDTUN_REQ_FLUSH_SEQ : 0 ) |
+        (rw & REQ_IO_STAT ? BDTUN_REQ_IO_STAT : 0 ) |
+        (rw & REQ_MIXED_MERGE ? BDTUN_REQ_MIXED_MERGE : 0 ) |
+        (rw & REQ_SECURE ? BDTUN_REQ_SECURE : 0);
+}
+
+/*
  * Takes a bio, and sends it to the char device.
  * We don't know if the bio will complete at this point.
  * Writes to the char device will complete the bio-s.
@@ -315,7 +354,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         // TODO: multithreading backend? At least, strict, strong, emphasized protocol definition notification
         if (count == BDTUN_TXREQ_HEADER_SIZE) {
                 req = (struct bdtun_txreq *)buf;
-                req->flags  = entry->bio->bi_rw;
+                req->flags  = bdtun_translate_bio_rw(entry->bio->bi_rw);
                 req->offset = entry->bio->bi_sector * KERNEL_SECTOR_SIZE;
                 req->size   = entry->bio->bi_size;
         } else if (bio_data_dir(entry->bio) == WRITE &&
