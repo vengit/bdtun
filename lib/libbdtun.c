@@ -17,7 +17,7 @@ int bdtun_read_request(int fd, struct bdtun_txreq *req) {
         size_t bufsize = 0;
         static char *buf = NULL;
 
-        PDEBUG("BDTUN_TXBDTUN_REQ_HEADER_SIZE: %d", BDTUN_TXBDTUN_REQ_HEADER_SIZE);
+        PDEBUG("BDTUN_TXREQ_HEADER_SIZE: %d", BDTUN_TXREQ_HEADER_SIZE);
         res = read(fd, req, BDTUN_TXREQ_HEADER_SIZE);
         if (res < 0) {
                 return res;

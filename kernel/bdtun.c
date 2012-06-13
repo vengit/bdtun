@@ -279,7 +279,9 @@ static unsigned long bdtun_translate_bio_rw(unsigned long rw) {
         (rw & REQ_FAILFAST_DRIVER ? BDTUN_REQ_FAILFAST_DRIVER : 0 ) |
         (rw & REQ_SYNC ? BDTUN_REQ_SYNC : 0 ) |
         (rw & REQ_META ? BDTUN_REQ_META : 0 ) |
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 2, 0)
         (rw & REQ_PRIO ? BDTUN_REQ_PRIO : 0 ) |
+#endif
         (rw & REQ_DISCARD ? BDTUN_REQ_DISCARD : 0 ) |
         (rw & REQ_NOIDLE ? BDTUN_REQ_NOIDLE : 0 ) |
         (rw & REQ_RAHEAD ? BDTUN_REQ_RAHEAD : 0 ) |
@@ -298,7 +300,9 @@ static unsigned long bdtun_translate_bio_rw(unsigned long rw) {
         (rw & REQ_ALLOCED ? BDTUN_REQ_ALLOCED : 0 ) |
         (rw & REQ_COPY_USER ? BDTUN_REQ_COPY_USER : 0 ) |
         (rw & REQ_FLUSH ? BDTUN_REQ_FLUSH : 0 ) |
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 2, 0)
         (rw & REQ_FLUSH_SEQ ? BDTUN_REQ_FLUSH_SEQ : 0 ) |
+#endif
         (rw & REQ_IO_STAT ? BDTUN_REQ_IO_STAT : 0 ) |
         (rw & REQ_MIXED_MERGE ? BDTUN_REQ_MIXED_MERGE : 0 ) |
         (rw & REQ_SECURE ? BDTUN_REQ_SECURE : 0);
