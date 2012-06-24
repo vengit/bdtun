@@ -1,0 +1,4 @@
+#!/bin/bash
+
+dkms add bdtun/@VERSION@
+dkms install bdtun/@VERSION@

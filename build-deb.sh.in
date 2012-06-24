@@ -1,0 +1,34 @@
+#!/bin/bash
+
+echo "WARNING! It will re./configure the source tree."
+echo "Press any key to continue, or CTRL+c to abort."
+read
+
+BUILDDIR=/tmp/bdtun_build
+KMDIR=$BUILDDIR/usr/src/bdtun-@VERSION@
+
+mkdir -p $KMDIR
+
+./configure --prefix=$BUILDDIR --exec-prefix=$BUILDDIR/usr
+
+make
+
+sudo make install
+
+cp -r DEBIAN $BUILDDIR/DEBIAN
+
+rm $BUILDDIR/DEBIAN/postinst.in
+rm $BUILDDIR/DEBIAN/prerm.in
+
+cp dkms.conf $KMDIR
+
+make clean
+
+cp -r . $KMDIR
+
+rm -rf $KMDIR/.git
+rm -rf $MKDIR/*.deb
+
+dpkg -b $BUILDDIR bdtun-@VERSION@.deb
+
+sudo rm -rf $BUILDDIR
