@@ -368,13 +368,15 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 bio_for_each_segment(bvec, entry->bio, i) {
                         void *kaddr = kmap(bvec->bv_page);
                         
-                        // TODO: its too expensive, nocopy should be implemented
                         if(copy_to_user(buf+pos, kaddr+bvec->bv_offset,
                                         bvec->bv_len) != 0)
                         {
                                 PDEBUG("error copying data to user\n");
                                 kunmap(bvec->bv_page);
                                 return -EIO;
+                        }
+                        if (bvec->bv_offset || bvec->bv_len != PAGE_SIZE) {
+                            PDEBUG("WARNING!!! Misaligned data: offset: %d, size: %d\n", bvec->bv_offset, bvec->bv_len);
                         }
                         kunmap(bvec->bv_page);
                         pos += bvec->bv_len;
