@@ -550,7 +550,8 @@ int bdtunch_mmap_fault(
 
         PDEBUG("mmap_fault ok");
 
-        return VM_FAULT_LOCKED;
+        #return VM_FAULT_LOCKED;
+        return VM_FAULT_MAJOR;
 }
 
 /*
