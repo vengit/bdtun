@@ -10,6 +10,7 @@
 *.tar.gz
 *.cache
 *.pyc
+*.deb
 
 Module.symvers
 modules.order
@@ -56,3 +57,8 @@ include/stamp-h1
 
 lib/bdtun.pc
 lib/bdtun_backend.pc
+
+build-deb.sh
+DEBIAN/postinst
+DEBIAN/prerm
+

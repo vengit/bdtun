@@ -1,0 +1,18 @@
+Package: bdtun
+Version: 0.0.1
+Section: kernel 
+Priority: optional
+Architecture: all
+Essential: no
+Depends: build-essential, linux-headers
+Pre-Depends: perl
+Recommends:
+Suggests:
+Installed-Size: 1024
+Maintainer: Tamas Laszlo Fabian [tamas.fabian@vengit.com]
+Conflicts:
+Replaces:
+Provides: bdtun
+Description: Bdtun is a kernel module that makes possible
+             to develop block device drivers in userspace.
+
