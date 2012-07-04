@@ -131,7 +131,7 @@ int bdtun_fail_request(int fd, struct bdtun_txreq *req)
  */
 int bdtun_create(int fd, const char *name, uint64_t blocksize, uint64_t size, int capabilities) {
         int ret;
-        struct bdtun_ctrl_command c;
+        struct bdtun_ctrl_command c = {0};
         
         c.command = BDTUN_COMM_CREATE;
         c.create.blocksize = blocksize;
@@ -159,7 +159,7 @@ int bdtun_create(int fd, const char *name, uint64_t blocksize, uint64_t size, in
 int bdtun_resize(int fd, const char *name, uint64_t size)
 {
         int ret;
-        struct bdtun_ctrl_command c;
+        struct bdtun_ctrl_command c = {0};
         
         c.command = BDTUN_COMM_RESIZE;
         c.resize.size = size;
@@ -179,7 +179,7 @@ int bdtun_resize(int fd, const char *name, uint64_t size)
  */
 int bdtun_remove(int fd, const char *name) {
         int ret;
-        struct bdtun_ctrl_command c;
+        struct bdtun_ctrl_command c = {0};
         
         c.command = BDTUN_COMM_REMOVE;
         strncpy(c.remove.name, name, 32);
@@ -198,7 +198,7 @@ int bdtun_remove(int fd, const char *name) {
  */
 int bdtun_info(int fd, const char *name, struct bdtun_info *info) {
         int ret;
-        struct bdtun_ctrl_command c;
+        struct bdtun_ctrl_command c = {0};
         
         c.command = BDTUN_COMM_INFO;
         strncpy(c.info.name, name, 32);
@@ -224,7 +224,7 @@ int bdtun_info(int fd, const char *name, struct bdtun_info *info) {
 int bdtun_list(int fd, size_t offset, size_t maxdevices, char ***names)
 {
         int i, j, ret;
-        struct bdtun_ctrl_command c;
+        struct bdtun_ctrl_command c = {0};
         static char buf[BDTUN_RESPONSE_SIZE];
         static char *name_pbuf[BDTUN_DEVNAMES];
         
