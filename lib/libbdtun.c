@@ -9,13 +9,19 @@
 
 #include "bdtun.h"
 
+/* TODO: DOCS, WARNING!!!
+ * 
+ * In a multithreading backend the read_requests and set_requests
+ * may collide, so the userspace program MUST synchronize correctly.
+ * */
+
 /*
  * Read a transfer request form a tunnel character device
+ * 
+ * After this, the read request will also be the data-current one.
  */
 int bdtun_read_request(int fd, struct bdtun_txreq *req) {
         ssize_t res;
-        size_t bufsize = 0;
-        static char *buf = NULL;
 
         PDEBUG("BDTUN_TXREQ_HEADER_SIZE: %d", BDTUN_TXREQ_HEADER_SIZE);
         res = read(fd, req, BDTUN_TXREQ_HEADER_SIZE);
@@ -23,103 +29,82 @@ int bdtun_read_request(int fd, struct bdtun_txreq *req) {
                 return res;
         }
 
-        /* If the buffer size is less than the request
-         * plus the completion byte then realloc */
-        if (bufsize < req->size + 1) {
-                buf = realloc(buf, req->size + 1);
-                if (buf == NULL) {
-                        return -ENOMEM;
-                }
-                bufsize = req->size + 1;
-        }
-        
-        req->buf = buf + 1;
-        
-        if (req->flags & BDTUN_REQ_WRITE) {
-                PDEBUG("Write request, getting data from kernel\n");
-                res = read(fd, req->buf, req->size);
-                if (res < 0) {
-                        return res;
-                }
-        }
-        req->is_mmapped = 0;
-        
         return 0;
 }
 
 /*
- * Read transfer request and mmap the current bio
+ * Set the request for data operations
+ *
+ * Sets the current request mmap and send request data work on
  */
-int bdtun_mmap_request(int fd, struct bdtun_txreq *req)
+int bdtun_set_request(int fd, struct bdtun_txreq *req)
 {
-        ssize_t res;
+        ssize_t res = write(fd, &req->id, sizeof(req->id));
+        if (res < 0) {
+                return res;
+        }
+        return res;
+}
 
-        res = read(fd, req, BDTUN_TXREQ_HEADER_SIZE);
+/*
+ * Mmap the data in the data-current request
+ *
+ * req must be the data-current request, because mmap have to
+ * be given a size argument, and it must match the data-current
+ * request's size.
+ */
+void *bdtun_mmap_request(int fd, struct bdtun_txreq *req)
+{
+        return mmap(0, req->size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+}
+
+/*
+ * Copy the data from the data-current request.
+ *
+ * Should only be called for write requests.
+ */
+ssize_t bdtun_get_request_data(int fd, struct bdtun_txreq *req, void *buf)
+{
+        ssize_t res = read(fd, buf, req->size);
+        if (res < 0) {
+                return res;
+        }
+        return res;
+}
+
+/*
+ * Copy data into the data-current request.
+ *
+ * Should only be called for read requests.
+ */
+ssize_t bdtun_send_request_data(int fd, struct bdtun_txreq *req, void *buf)
+{
+        ssize_t res = write(fd, buf, req->size);
+        if (res < 0) {
+                return res;
+        }
+        return res;
+}
+
+/*
+ * Tell the driver that the data-current bio is complete
+ */
+ssize_t bdtun_complete_request(int fd, struct bdtun_txreq *req, void *buf)
+{
+        ssize_t res = write(fd, "\0x00", 1);
         if (res < 0) {
                 return res;
         }
 
-        req->buf = mmap(0, req->size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-        if (req->buf < 0) {
-                PDEBUG("Could not mmap bio.");
-                return req->buf;
-        }
-        req->is_mmapped = 1;
-
         return 0;
 }
 
 /*
- * Tell the driver that the bio complete
- * 
- * If it was a read request, the buf member must contain the
- * data read by the user process.
+ * Tell the driver that the data-current bio is failed to complete
  */
-int bdtun_complete_request(int fd, struct bdtun_txreq *req)
+ssize_t bdtun_fail_request(int fd, struct bdtun_txreq *req)
 {
-        int res;
-
-        /* Zero byte means success */
-        if (req->is_mmapped) {
-                char buf = 0;
-                PDEBUG("Req was mmapped, completing request by completion byte\n");
-                res = munmap(req->buf, req->size);
-                if (res < 0) {
-                        return res;
-                }
-                res = write(fd, &buf, 1);
-                if (res < 0) {
-                        return res;
-                }
-        } else {
-                req->buf--;
-                req->buf[0] = 0;
-
-                if (req->flags & BDTUN_REQ_WRITE) {
-                        PDEBUG("Completing write request by completion byte\n");
-                        res = write(fd, req->buf, 1);
-                } else {
-                        PDEBUG("Completing read request by sending data\n");
-                        res = write(fd, req->buf, req->size+1);
-                }
-
-                req->buf++;
-                if (res < 0) {
-                        return res;
-                }
-        }
-
-        return 0;
-}
-
-int bdtun_fail_request(int fd, struct bdtun_txreq *req)
-{
-        int res;
-        /* Non-zero byte means failure */
-        req->buf--;
-        req->buf[0] = 1;
-        res = write(fd, req->buf, 1);
-        req->buf++;
+        ssize_t res = write(fd, "\0x01", 1);
         if (res < 0) {
                 return res;
         }

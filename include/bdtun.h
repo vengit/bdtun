@@ -1,8 +1,6 @@
 #ifndef __BDTUN_H
 #define __BDTUN_H
 
-
-//TODO: dirty hack. Put translation logic to driver
 #define BDTUN_REQ_WRITE               (1 << 1)
 #define BDTUN_REQ_FAILFAST_DEV        (1 << 2)
 #define BDTUN_REQ_FAILFAST_TRANSPORT  (1 << 3)
@@ -80,15 +78,13 @@ extern "C" {
  * Block tunnel transfer requests
  */
 struct bdtun_txreq {
+        uintptr_t id;
         unsigned long flags;
         unsigned long offset;
         unsigned long size;
-        // This is where header ends
-        unsigned char is_mmapped;
-        char *buf;
 };
 
-#define BDTUN_TXREQ_HEADER_SIZE sizeof(unsigned long)*3
+#define BDTUN_TXREQ_HEADER_SIZE sizeof(struct bdtun_txreq)
 
 /*
  * Device capabilities
@@ -146,11 +142,17 @@ struct bdtun_ctrl_command {
 
 int bdtun_read_request(int fd, struct bdtun_txreq *req);
 
-int bdtun_mmap_request(int fd, struct bdtun_txreq *req);
+int bdtun_set_request(int fd, struct bdtun_txreq *req);
 
-int bdtun_complete_request(int fd, struct bdtun_txreq *req);
+void *bdtun_mmap_request(int fd, struct bdtun_txreq *req);
 
-int bdtun_fail_request(int fd, struct bdtun_txreq *req);
+ssize_t bdtun_get_request_data(int fd, struct bdtun_txreq *req, void *buf);
+
+ssize_t bdtun_send_request_data(int fd, struct bdtun_txreq *req, void *buf);
+
+ssize_t bdtun_complete_request(int fd, struct bdtun_txreq *req, void *buf);
+
+ssize_t bdtun_fail_request(int fd, struct bdtun_txreq *req);
 
 int bdtun_create(int fd, const char *name, uint64_t blocksize, uint64_t size, int capabilities);
 

@@ -36,11 +36,6 @@ struct bdtun_bio_list_entry {
         struct list_head list;
         struct bio *bio;
         unsigned long start_time;
-        unsigned char is_mmapped;
-        /* TODO: start_time mimics the similarly named field
-         * in a request struct. This may be inaccurate. Check
-         * where this field gets propagated to see if this is OK.
-         */
 };
 
 /*
@@ -63,8 +58,11 @@ struct bdtun {
         struct cdev ch_dev;
         int ch_num;
         struct device *ch_device;
-        
+
+        /* bios waiting for processing */
         struct list_head bio_list;
+        struct list_head *meta_current_bio;
+        struct list_head *data_current_bio;
         wait_queue_head_t reader_queue;
         
         spinlock_t bio_list_lock;
@@ -84,10 +82,12 @@ struct bdtun {
         struct mutex mutex;
 };
 
+#define no_meta_bio(dev) dev->meta_current_bio->next == &dev->bio_list
+#define no_data_bio(dev) dev->data_current_bio->next == &dev->bio_list
+
 /*
  * Disk add work queue.
  */
-
 struct bdtun_add_disk_work {
         struct gendisk *gd;
         struct mutex *mutex;
@@ -133,8 +133,6 @@ static void bdtun_do_add_disk(struct work_struct *work)
 #   define MKREQ_RETVAL 
 #endif
 
-/* TODO: only ONE request is delivered by the kernel,
- * this is a very big limitation */
 static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio)
 {
         struct bdtun *dev = (struct bdtun *)(q->queuedata);
@@ -162,7 +160,6 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
 
         new->start_time = jiffies;
         new->bio = bio;
-        new->is_mmapped = 0;
         
         spin_lock(&dev->bio_list_lock);
         list_add_tail(&new->list, &dev->bio_list);
@@ -248,8 +245,7 @@ static int bdtunch_open(struct inode *inode, struct file *filp)
         dev->ch_ucnt++;
         dev->ucnt++;
         spin_unlock(&dev->lock);
-        // TODO: implicit cast, not nice
-        filp->private_data = dev;
+        filp->private_data = (void *)dev;
         return 0;
 }
 
@@ -279,6 +275,7 @@ static unsigned long bdtun_translate_bio_rw(unsigned long rw) {
         (rw & REQ_FAILFAST_DRIVER ? BDTUN_REQ_FAILFAST_DRIVER : 0 ) |
         (rw & REQ_SYNC ? BDTUN_REQ_SYNC : 0 ) |
         (rw & REQ_META ? BDTUN_REQ_META : 0 ) |
+        // TODO: duck check instead of version check
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 2, 0)
         (rw & REQ_PRIO ? BDTUN_REQ_PRIO : 0 ) |
 #endif
@@ -309,9 +306,8 @@ static unsigned long bdtun_translate_bio_rw(unsigned long rw) {
 }
 
 /*
- * Takes a bio, and sends it to the char device.
- * We don't know if the bio will complete at this point.
- * Writes to the char device will complete the bio-s.
+ * Sends metadata of the meta-current bio, or data of the
+ * data-current bio
  */
 static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *f_pos)
 {
@@ -322,15 +318,16 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         struct bio_vec *bvec;
         DEFINE_WAIT(wait);
         int i;
-        
+
         out_list_is_empty:
-        
+
+        // TODO: rethink it without wait queue. Force US to use poll.
         PDEBUG("Preparing to wait\n");
         prepare_to_wait(&dev->reader_queue, &wait, TASK_INTERRUPTIBLE);
-        
+
         PDEBUG("grabbing spinlock on out queue\n");
         spin_lock(&dev->bio_list_lock);
-        
+
         if (list_empty(&dev->bio_list)) {
                 PDEBUG("list empty, releasing spinlock for out queue\n");
                 spin_unlock(&dev->bio_list_lock);
@@ -348,21 +345,43 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 PDEBUG("no pending signals, checking out queue again\n");
                 goto out_list_is_empty;
         }
-        
+
         PDEBUG("list containts bio-s, finishing wait\n");
         finish_wait(&dev->reader_queue, &wait);
-        PDEBUG("getting first entry\n");
-        entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
+        PDEBUG("getting next entry\n");
+        if (no_meta_bio(dev)) {
+            memset(buf, 0, BDTUN_TXREQ_HEADER_SIZE);
+            dev->meta_current_bio = dev->meta_current_bio->next;
+            return count;
+        }
         spin_unlock(&dev->bio_list_lock);
 
-        // TODO: multithreading backend? At least, strict, strong, emphasized protocol definition notification
         if (count == BDTUN_TXREQ_HEADER_SIZE) {
+                entry = list_entry(
+                        dev->meta_current_bio->next,
+                        struct bdtun_bio_list_entry, list
+                );
+
                 req = (struct bdtun_txreq *)buf;
+                req->id     = (uintptr_t)entry;
                 req->flags  = bdtun_translate_bio_rw(entry->bio->bi_rw);
                 req->offset = entry->bio->bi_sector * KERNEL_SECTOR_SIZE;
                 req->size   = entry->bio->bi_size;
-        } else if (bio_data_dir(entry->bio) == WRITE &&
-                   count == entry->bio->bi_size)
+
+                spin_lock(&dev->bio_list_lock);
+                dev->data_current_bio = dev->meta_current_bio;
+                dev->meta_current_bio = dev->meta_current_bio->next;
+                spin_unlock(&dev->bio_list_lock);
+
+                return count;
+        }
+
+        entry = list_entry(
+                dev->data_current_bio->next,
+                struct bdtun_bio_list_entry, list
+        );
+
+        if (bio_data_dir(entry->bio) == WRITE && count == entry->bio->bi_size)
         {
                 /* Transfer bio data. */
                 bio_for_each_segment(bvec, entry->bio, i) {
@@ -381,19 +400,29 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                         kunmap(bvec->bv_page);
                         pos += bvec->bv_len;
                 }
-        } else {
-                PDEBUG("request size is invalid, returning -EIO\n");
-                PDEBUG(
-                        "count: %d, BDTUN_TXREQ_HEADER_SIZE: %d, write? %d, bio->bi_size: %d",
-                        count,
-                        BDTUN_TXREQ_HEADER_SIZE,
-                        bio_data_dir(entry->bio) == WRITE,
-                        entry->bio->bi_size
-                );
-                return -EIO;
+                return count;
         }
 
-        return count;
+        PDEBUG("request size is invalid, returning -EIO\n");
+        PDEBUG(
+                "count: %d, BDTUN_TXREQ_HEADER_SIZE: %d, write? %d, bio->bi_size: %d",
+                count,
+                BDTUN_TXREQ_HEADER_SIZE,
+                bio_data_dir(entry->bio) == WRITE,
+                entry->bio->bi_size
+        );
+        return -EIO;
+}
+
+void bdtun_update_iostat(struct bdtun *dev, struct bdtun_bio_list_entry *entry)
+{
+        int rw = bio_data_dir(entry->bio);
+        unsigned long duration = jiffies - entry->start_time;
+        int cpu = part_stat_lock();
+        part_stat_add(cpu, &dev->bd_gd->part0, ticks[rw], duration);
+        part_round_stats(cpu, &dev->bd_gd->part0);
+        part_dec_in_flight(&dev->bd_gd->part0, rw);
+        part_stat_unlock();
 }
 
 static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, loff_t *offset)
@@ -401,69 +430,49 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         struct bdtun *dev = (struct bdtun *)(filp->private_data);
         struct bdtun_bio_list_entry *entry;
         struct bio_vec *bvec;
-        unsigned long duration;
         unsigned long pos = 0;
-        int cpu;
-        int rw;
         int i;
 
         spin_lock(&dev->bio_list_lock);
-        if (list_empty(&dev->bio_list)) {
+        if (no_data_bio(dev)) {
                 spin_unlock(&dev->bio_list_lock);
-                PDEBUG("got write on empty list, returning -EIO");
+                PDEBUG("got write on empty data-current bio, returning -EIO");
                 return -EIO;
         }
-        entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
+        entry = list_entry(dev->data_current_bio, struct bdtun_bio_list_entry, list);
         spin_unlock(&dev->bio_list_lock);
 
-        /* Validate request size */
-        if (count < 1 ||
-            (!entry->is_mmapped && bio_data_dir(entry->bio) == READ && !buf[0] && count != entry->bio->bi_size + 1) ||
-            (bio_data_dir(entry->bio) == WRITE && count != 1) ||
-            (entry->is_mmapped && count != 1) ||
-            (buf[0] && count != 1)
-        ) {
-                PDEBUG("invalid request size from user returning -EIO and resetting bio.\n");
-                PDEBUG(
-                        "is_mmapped: %d, read? %d, buf[0]: %d, count: %d, bio->bi_size: %d",
-                        entry->is_mmapped,
-                        bio_data_dir(entry->bio) == READ,
-                        buf[0],
-                        count,
-                        entry->bio->bi_size
-                );
-                return -EIO;
-        }
-        
-        /* Read completion byte */
-        if (buf[0]) {
-                PDEBUG("user process explicitly signaled failure, failing bio.\n");
+        /* 1. It's a completion byte. */
+        if (count == 1) {
                 spin_lock(&dev->bio_list_lock);
                 list_del(&entry->list);
                 spin_unlock(&dev->bio_list_lock);
-                bio_endio(entry->bio, -EIO);
-
-                // TODO: factor this into a function.
-                rw = bio_data_dir(entry->bio);
-                duration = jiffies - entry->start_time;
-                cpu = part_stat_lock();
-                part_stat_add(cpu, &dev->bd_gd->part0, ticks[rw], duration);
-                part_round_stats(cpu, &dev->bd_gd->part0);
-                part_dec_in_flight(&dev->bd_gd->part0, rw);
-                part_stat_unlock();
-
+                if (buf[0]) {
+                        PDEBUG("user signaled failure, failing bio.\n");
+                        bio_endio(entry->bio, -EIO);
+                } else {
+                        PDEBUG("user signaled completion, completing bio.\n");
+                        bio_endio(entry->bio, 0);
+                }
+                bdtun_update_iostat(dev, entry);
+                dev->data_current_bio = dev->meta_current_bio;
                 kfree(entry);
-                return 0;
+                return count;
         }
-        
-        buf++;
-        
-        /* Check if data needts to be copied from buf */
-        if (!entry->is_mmapped && bio_data_dir(entry->bio) == READ) {
-                /* Yes, data is in buf, copy it into the bio */
+
+        /* 2. It's a set data-current bio request */
+        if (count == sizeof(uintptr_t)) {
+                spin_lock(&dev->bio_list_lock);
+                dev->data_current_bio = (struct list_head *)*(uintptr_t *)buf;
+                spin_unlock(&dev->bio_list_lock);
+                return count;
+        }
+
+        /* 3. It's data */
+        if (bio_data_dir(entry->bio) == READ &&
+            count == entry->bio->bi_size) {
                 bio_for_each_segment(bvec, entry->bio, i) {
                         void *kaddr = kmap(bvec->bv_page);
-                        // TODO: too expensive
                         if(copy_from_user(kaddr+bvec->bv_offset,
                                           buf+pos, bvec->bv_len) != 0)
                         {
@@ -476,43 +485,30 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                         kunmap(bvec->bv_page);
                         pos += bvec->bv_len;
                 }
+                return count;
         }
 
-        spin_lock(&dev->bio_list_lock);
-        list_del(&entry->list);
-        spin_unlock(&dev->bio_list_lock);
-        
-        bio_endio(entry->bio, 0);
-        
-        // TODO: factor this into a function.
-        rw = bio_data_dir(entry->bio);
-        duration = jiffies - entry->start_time;
-        cpu = part_stat_lock();
-        part_stat_add(cpu, &dev->bd_gd->part0, ticks[rw], duration);
-        part_round_stats(cpu, &dev->bd_gd->part0);
-        part_dec_in_flight(&dev->bd_gd->part0, rw);
-        part_stat_unlock();
+        /* 4. It's a error */
 
-        kfree(entry);
-        
-        return count;
+        PDEBUG("invalid request size from user returning -EIO.\n");
+        return -EIO;
 }
 
 unsigned int bdtunch_poll(struct file *filp, poll_table *wait) {
         struct bdtun *dev = filp->private_data;
         unsigned int mask = 0;
-        
+
         poll_wait(filp, &dev->reader_queue, wait);
-        
+
         mask |= POLLOUT | POLLWRNORM; /* writable */
-        
+
         spin_lock(&dev->bio_list_lock);
         if (!list_empty(&dev->bio_list)) {
                 PDEBUG("list is not empty, setting mask\n");
                 mask |= POLLIN | POLLRDNORM; /* readable */
         }
         spin_unlock(&dev->bio_list_lock);
-        
+
         return mask;
 }
 
@@ -529,10 +525,8 @@ int bdtunch_mmap_fault(
 
         PDEBUG("Running mmap_fault, offset %d", vmf->pgoff);
 
-        // Get current bio
-        // We don't need lock here, because we always have at least
-        // 1 bio in queue, and it can't shrink.
-        entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
+        // Get data-current bio
+        entry = list_entry(dev->data_current_bio->next, struct bdtun_bio_list_entry, list);
 
         // Check page offset validity
         if (vmf->pgoff >= entry->bio->bi_vcnt) {
@@ -550,8 +544,7 @@ int bdtunch_mmap_fault(
 
         PDEBUG("mmap_fault ok");
 
-        #return VM_FAULT_LOCKED;
-        return VM_FAULT_MAJOR;
+        return VM_FAULT_LOCKED;
 }
 
 /*
@@ -577,8 +570,6 @@ static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
         vma->vm_flags |= VM_RESERVED;
         vma->vm_ops = &bdtunch_mmap_ops;
         vma->vm_private_data = (void *)dev;
-
-        list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list)->is_mmapped = 1;
 
         return 0;
 }
@@ -626,29 +617,29 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         char charname[BDEVNAME_SIZE + 5];
         char qname[BDEVNAME_SIZE + 3];
         struct bdtun_add_disk_work *add_disk_work;
-        
+
         /* Check if device exist */
-        
+
         // TODO: relying on the fact, that only one process can open the control chardev at the same time. But what if,
         // the process forks itself AFTER? We should use Locks here too
         if (bdtun_find_device(name)) {
                 return -EEXIST;
         }
-        
+
         if (block_size < 512 || block_size > PAGE_SIZE) {
                 return -EINVAL;
         }
-        
+
         /* Check if block_size is a power of two */
         if (block_size & (block_size - 1)) {
                 return -EINVAL;
         }
-        
+
         /* Check if size is a multiple of block_size */
         if (size % block_size) {
                 return -EINVAL;
         }
-        
+
         /*
          * Set up character device and workqueue name
          */
@@ -657,7 +648,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         strcat(charname, "_tun");
         strncpy(qname, name, BDEVNAME_SIZE);
         strcat(qname, "_q");
-        
+
         /*
          * Allocate device structure
          */
@@ -675,34 +666,35 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
                 goto out;
         }
 
-        
         /*
          * Determine device size
          */
         new->bd_block_size = block_size;
         new->bd_nsectors   = size / block_size;
         new->bd_size       = size;
-        
+
         /*
          * Semaphores and stuff like that 
          */
         spin_lock_init(&new->bio_list_lock);
         spin_lock_init(&new->lock);
-        
+
         new->removing = 0;
         new->ucnt     = 0;
         new->ch_ucnt  = 0;
-        
+
         /*
          * Wait queue
          */
         init_waitqueue_head(&new->reader_queue);
-        
+
         /*
          * Bio list
          */
         INIT_LIST_HEAD(&new->bio_list);
-        
+        new->meta_current_bio = &new->bio_list;
+        new->data_current_bio = &new->bio_list;
+
         /*
          * Get a request queue.
          */
