@@ -152,9 +152,9 @@ ssize_t bdtun_get_request_data(int fd, struct bdtun_txreq *req, void *buf);
 
 ssize_t bdtun_send_request_data(int fd, struct bdtun_txreq *req, void *buf);
 
-ssize_t bdtun_complete_request(int fd, struct bdtun_txreq *req, void *buf);
+ssize_t bdtun_complete_request(int fd);
 
-ssize_t bdtun_fail_request(int fd, struct bdtun_txreq *req);
+ssize_t bdtun_fail_request(int fd);
 
 int bdtun_create(int fd, const char *name, uint64_t blocksize, uint64_t size, int capabilities);
 

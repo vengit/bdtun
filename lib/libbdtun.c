@@ -94,7 +94,7 @@ ssize_t bdtun_send_request_data(int fd, struct bdtun_txreq *req, void *buf)
 /*
  * Tell the driver that the data-current bio is complete
  */
-ssize_t bdtun_complete_request(int fd, struct bdtun_txreq *req, void *buf)
+ssize_t bdtun_complete_request(int fd)
 {
         ssize_t res = write(fd, "\0x00", 1);
         if (res < 0) {
@@ -107,7 +107,7 @@ ssize_t bdtun_complete_request(int fd, struct bdtun_txreq *req, void *buf)
 /*
  * Tell the driver that the data-current bio is failed to complete
  */
-ssize_t bdtun_fail_request(int fd, struct bdtun_txreq *req)
+ssize_t bdtun_fail_request(int fd)
 {
         ssize_t res = write(fd, "\0x01", 1);
         if (res < 0) {

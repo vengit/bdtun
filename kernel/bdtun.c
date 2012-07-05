@@ -455,8 +455,8 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                         bio_endio(entry->bio, 0);
                 }
                 bdtun_update_iostat(dev, entry);
-                dev->meta_current_bio = dev->bio_list;
-                dev->data_current_bio = dev->bio_list;
+                dev->meta_current_bio = &dev->bio_list;
+                dev->data_current_bio = &dev->bio_list;
                 kfree(entry);
                 return count;
         }
