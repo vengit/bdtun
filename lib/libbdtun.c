@@ -58,6 +58,11 @@ void *bdtun_mmap_request(int fd, struct bdtun_txreq *req)
         return mmap(0, req->size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 }
 
+int bdtun_munmap_request(void *buf, struct bdtun_txreq *req)
+{
+        return munmap(buf, req->size);
+}
+
 /*
  * Copy the data from the data-current request.
  *

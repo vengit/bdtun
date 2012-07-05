@@ -146,6 +146,8 @@ int bdtun_set_request(int fd, struct bdtun_txreq *req);
 
 void *bdtun_mmap_request(int fd, struct bdtun_txreq *req);
 
+int bdtun_munmap_request(void *buf, struct bdtun_txreq *req);
+
 ssize_t bdtun_get_request_data(int fd, struct bdtun_txreq *req, void *buf);
 
 ssize_t bdtun_send_request_data(int fd, struct bdtun_txreq *req, void *buf);
