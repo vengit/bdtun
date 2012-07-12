@@ -352,9 +352,9 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         if (no_meta_bio(dev)) {
             memset(buf, 0, BDTUN_TXREQ_HEADER_SIZE);
             dev->meta_current_bio = dev->meta_current_bio->next;
+            spin_unlock(&dev->bio_list_lock);
             return count;
         }
-        spin_unlock(&dev->bio_list_lock);
 
         if (count == BDTUN_TXREQ_HEADER_SIZE) {
                 entry = list_entry(
@@ -368,18 +368,18 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 req->offset = entry->bio->bi_sector * KERNEL_SECTOR_SIZE;
                 req->size   = entry->bio->bi_size;
 
-                spin_lock(&dev->bio_list_lock);
-                dev->data_current_bio = dev->meta_current_bio;
                 dev->meta_current_bio = dev->meta_current_bio->next;
+                dev->data_current_bio = dev->meta_current_bio;
                 spin_unlock(&dev->bio_list_lock);
 
                 return count;
         }
-
         entry = list_entry(
                 dev->data_current_bio->next,
                 struct bdtun_bio_list_entry, list
         );
+
+        spin_unlock(&dev->bio_list_lock);
 
         if (bio_data_dir(entry->bio) == WRITE && count == entry->bio->bi_size)
         {
@@ -433,20 +433,27 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         unsigned long pos = 0;
         int i;
 
+        /* 2. It's a set data-current bio request */
+        if (count == sizeof(uintptr_t)) {
+                spin_lock(&dev->bio_list_lock);
+                dev->data_current_bio = (struct list_head *)*(uintptr_t *)buf;
+                spin_unlock(&dev->bio_list_lock);
+                return count;
+        }
+
         spin_lock(&dev->bio_list_lock);
         if (no_data_bio(dev)) {
                 spin_unlock(&dev->bio_list_lock);
                 PDEBUG("got write on empty data-current bio, returning -EIO");
                 return -EIO;
         }
-        entry = list_entry(dev->data_current_bio, struct bdtun_bio_list_entry, list);
+        entry = list_entry(dev->data_current_bio->next, struct bdtun_bio_list_entry, list);
         spin_unlock(&dev->bio_list_lock);
 
         /* 1. It's a completion byte. */
         if (count == 1) {
                 spin_lock(&dev->bio_list_lock);
                 list_del(&entry->list);
-                spin_unlock(&dev->bio_list_lock);
                 if (buf[0]) {
                         PDEBUG("user signaled failure, failing bio.\n");
                         bio_endio(entry->bio, -EIO);
@@ -455,17 +462,11 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                         bio_endio(entry->bio, 0);
                 }
                 bdtun_update_iostat(dev, entry);
+                // TODO: Ez nem jó így
                 dev->meta_current_bio = &dev->bio_list;
                 dev->data_current_bio = &dev->bio_list;
-                kfree(entry);
-                return count;
-        }
-
-        /* 2. It's a set data-current bio request */
-        if (count == sizeof(uintptr_t)) {
-                spin_lock(&dev->bio_list_lock);
-                dev->data_current_bio = (struct list_head *)*(uintptr_t *)buf;
                 spin_unlock(&dev->bio_list_lock);
+                kfree(entry);
                 return count;
         }
 
