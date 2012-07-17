@@ -53,7 +53,7 @@ static struct mutex mutex;
 struct bdtun {
         /* It's a linked list of devices */
         struct list_head list;
-        
+
         /* character device related */
         struct cdev ch_dev;
         int ch_num;
@@ -64,15 +64,15 @@ struct bdtun {
         struct list_head *meta_current_bio;
         struct list_head *data_current_bio;
         wait_queue_head_t reader_queue;
-        
+
         spinlock_t bio_list_lock;
         spinlock_t lock;
         int removing;
-        
+
         /* Use count */
         int ucnt;
         int ch_ucnt;
-        
+
         /* Block device related stuff */
         uint64_t bd_size;
         uint64_t bd_block_size;
@@ -82,8 +82,8 @@ struct bdtun {
         struct mutex mutex;
 };
 
-#define no_meta_bio(dev) dev->meta_current_bio->next == &dev->bio_list
-#define no_data_bio(dev) dev->data_current_bio->next == &dev->bio_list
+#define no_meta_bio(dev) dev->meta_current_bio == &dev->bio_list
+#define no_data_bio(dev) dev->data_current_bio == &dev->bio_list
 
 /*
  * Disk add work queue.
@@ -160,11 +160,15 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
 
         new->start_time = jiffies;
         new->bio = bio;
-        
+
+        if (no_meta_bio(dev)) {
+                dev->meta_current_bio = new;
+        }
+
         spin_lock(&dev->bio_list_lock);
         list_add_tail(&new->list, &dev->bio_list);
         spin_unlock(&dev->bio_list_lock);
-        
+
         wake_up(&dev->reader_queue);
         PDEBUG("request queued\n");
 
@@ -349,16 +353,17 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         PDEBUG("list containts bio-s, finishing wait\n");
         finish_wait(&dev->reader_queue, &wait);
         PDEBUG("getting next entry\n");
-        if (no_meta_bio(dev)) {
-            memset(buf, 0, BDTUN_TXREQ_HEADER_SIZE);
-            dev->meta_current_bio = dev->meta_current_bio->next;
-            spin_unlock(&dev->bio_list_lock);
-            return count;
-        }
 
         if (count == BDTUN_TXREQ_HEADER_SIZE) {
+                if (no_meta_bio(dev)) {
+                    memset(buf, 0, BDTUN_TXREQ_HEADER_SIZE);
+                    dev->meta_current_bio = dev->meta_current_bio->next;
+                    spin_unlock(&dev->bio_list_lock);
+                    return count;
+                }
+
                 entry = list_entry(
-                        dev->meta_current_bio->next,
+                        dev->meta_current_bio,
                         struct bdtun_bio_list_entry, list
                 );
 
@@ -369,13 +374,19 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 req->size   = entry->bio->bi_size;
 
                 dev->meta_current_bio = dev->meta_current_bio->next;
-                dev->data_current_bio = dev->meta_current_bio;
                 spin_unlock(&dev->bio_list_lock);
 
                 return count;
         }
+
+        if (no_data_bio(dev)) {
+            PDEBUG("Got non-header read, but there's no current data bio.\n");
+            spin_unlock(&dev->bio_list_lock);
+            return -EIO;
+        }
+
         entry = list_entry(
-                dev->data_current_bio->next,
+                dev->data_current_bio,
                 struct bdtun_bio_list_entry, list
         );
 
@@ -447,13 +458,12 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                 PDEBUG("got write on empty data-current bio, returning -EIO");
                 return -EIO;
         }
-        entry = list_entry(dev->data_current_bio->next, struct bdtun_bio_list_entry, list);
+        entry = list_entry(dev->data_current_bio, struct bdtun_bio_list_entry, list);
         spin_unlock(&dev->bio_list_lock);
 
         /* 1. It's a completion byte. */
         if (count == 1) {
                 spin_lock(&dev->bio_list_lock);
-                list_del(&entry->list);
                 if (buf[0]) {
                         PDEBUG("user signaled failure, failing bio.\n");
                         bio_endio(entry->bio, -EIO);
@@ -462,9 +472,11 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                         bio_endio(entry->bio, 0);
                 }
                 bdtun_update_iostat(dev, entry);
-                // TODO: Ez nem jó így
-                dev->meta_current_bio = &dev->bio_list;
-                dev->data_current_bio = &dev->bio_list;
+                /* If we're completing the current bio, step ahead. */
+                if (dev->data_current_bio == dev->meta_current_bio) {
+                        dev->meta_current_bio = dev->meta_current_bio->next;
+                }
+                list_del(&entry->list);
                 spin_unlock(&dev->bio_list_lock);
                 kfree(entry);
                 return count;
@@ -528,7 +540,10 @@ int bdtunch_mmap_fault(
         PDEBUG("Running mmap_fault, offset %d", vmf->pgoff);
 
         // Get data-current bio
-        entry = list_entry(dev->data_current_bio->next, struct bdtun_bio_list_entry, list);
+        entry = list_entry(
+                dev->data_current_bio,
+                struct bdtun_bio_list_entry, list
+        );
 
         // Check page offset validity
         if (vmf->pgoff >= entry->bio->bi_vcnt) {

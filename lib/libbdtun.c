@@ -21,15 +21,7 @@
  * After this, the read request will also be the data-current one.
  */
 int bdtun_read_request(int fd, struct bdtun_txreq *req) {
-        ssize_t res;
-
-        PDEBUG("BDTUN_TXREQ_HEADER_SIZE: %d", BDTUN_TXREQ_HEADER_SIZE);
-        res = read(fd, req, BDTUN_TXREQ_HEADER_SIZE);
-        if (res < 0) {
-                return res;
-        }
-
-        return 0;
+        return read(fd, req, BDTUN_TXREQ_HEADER_SIZE);
 }
 
 /*
@@ -39,11 +31,7 @@ int bdtun_read_request(int fd, struct bdtun_txreq *req) {
  */
 int bdtun_set_request(int fd, struct bdtun_txreq *req)
 {
-        ssize_t res = write(fd, &req->id, sizeof(req->id));
-        if (res < 0) {
-                return res;
-        }
-        return res;
+        return write(fd, &req->id, sizeof(req->id));
 }
 
 /*
@@ -70,11 +58,7 @@ int bdtun_munmap_request(void *buf, struct bdtun_txreq *req)
  */
 ssize_t bdtun_get_request_data(int fd, struct bdtun_txreq *req, void *buf)
 {
-        ssize_t res = read(fd, buf, req->size);
-        if (res < 0) {
-                return res;
-        }
-        return res;
+        return read(fd, buf, req->size);
 }
 
 /*
@@ -84,11 +68,7 @@ ssize_t bdtun_get_request_data(int fd, struct bdtun_txreq *req, void *buf)
  */
 ssize_t bdtun_send_request_data(int fd, struct bdtun_txreq *req, void *buf)
 {
-        ssize_t res = write(fd, buf, req->size);
-        if (res < 0) {
-                return res;
-        }
-        return res;
+        return write(fd, buf, req->size);
 }
 
 /*
@@ -96,12 +76,7 @@ ssize_t bdtun_send_request_data(int fd, struct bdtun_txreq *req, void *buf)
  */
 ssize_t bdtun_complete_request(int fd)
 {
-        ssize_t res = write(fd, "\0x00", 1);
-        if (res < 0) {
-                return res;
-        }
-
-        return 0;
+        return write(fd, "\0x00", 1);
 }
 
 /*
@@ -109,11 +84,7 @@ ssize_t bdtun_complete_request(int fd)
  */
 ssize_t bdtun_fail_request(int fd)
 {
-        ssize_t res = write(fd, "\0x01", 1);
-        if (res < 0) {
-                return res;
-        }
-        return 0;
+        return write(fd, "\0x01", 1);
 }
 
 /*
