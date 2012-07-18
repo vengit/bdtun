@@ -65,8 +65,10 @@ struct bdtun {
         struct list_head *data_current_bio;
         wait_queue_head_t reader_queue;
 
+        /* The bio_list_lock should be grabbed every time the list
+         * itself is manipulated */
         spinlock_t bio_list_lock;
-        spinlock_t lock;
+
         int removing;
 
         /* Use count */
@@ -79,6 +81,11 @@ struct bdtun {
         uint64_t bd_nsectors;
         int capabilities;
         struct gendisk *bd_gd;
+
+        /*
+         * The mutex must be grabbed whenever the device's properties
+         * are set (like resize)
+         */
         struct mutex mutex;
 };
 
@@ -139,14 +146,18 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
         struct bdtun_bio_list_entry *new;
         const int rw = bio_data_dir(bio);
         int cpu;
-        
-        spin_lock(&dev->lock);
-        if (dev->removing) {
-                spin_unlock(&dev->lock);
+
+        if (mutex_lock_interruptible(&dev->mutex)) {
                 bio_endio(bio, -EIO);
                 return MKREQ_RETVAL;
         }
-        spin_unlock(&dev->lock);
+
+        if (dev->removing) {
+                mutex_unlock(&dev->mutex);
+                bio_endio(bio, -EIO);
+                return MKREQ_RETVAL;
+        }
+        mutex_unlock(&dev->mutex);
 
         new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_KERNEL);
 
@@ -186,12 +197,16 @@ static int bdtun_open(struct block_device *bdev, fmode_t mode)
         // TODO: what if the bdev structure is kfreed in the meantime we run??
         struct bdtun *dev = (struct bdtun *)(bdev->bd_disk->queue->queuedata);
         PDEBUG("bdtun_open()\n");
-        spin_lock(&dev->lock);
+
+        if (mutex_lock_interruptible(&dev->mutex)) {
+                return -ERESTARTSYS;
+        }
+
         if (dev->removing) {
-                spin_unlock(&dev->lock);
+                mutex_unlock(&dev->mutex);
                 return -ENOENT;
         }
-        spin_unlock(&dev->lock);
+        mutex_unlock(&dev->mutex);
         return 0;
 }
 
@@ -237,19 +252,28 @@ static int bdtunch_open(struct inode *inode, struct file *filp)
         struct bdtun *dev = container_of(inode->i_cdev, struct bdtun, ch_dev);
 
         PDEBUG("got device_open on char dev\n");
-        spin_lock(&dev->lock);
+
+        if (mutex_lock_interruptible(&dev->mutex)) {
+                return -ERESTARTSYS;
+        }
+
         if (dev->ch_ucnt) {
-                spin_unlock(&dev->lock);
+                mutex_unlock(&dev->mutex);
                 return -EBUSY;
         }
+
         if (dev->removing) {
-                spin_unlock(&dev->lock);
+                mutex_unlock(&dev->mutex);
                 return -EBUSY;
         }
+
         dev->ch_ucnt++;
         dev->ucnt++;
-        spin_unlock(&dev->lock);
+
+        mutex_unlock(&dev->mutex);
+
         filp->private_data = (void *)dev;
+
         return 0;
 }
 
@@ -258,10 +282,16 @@ static int bdtunch_release(struct inode *inode, struct file *filp)
         struct bdtun *dev = container_of(inode->i_cdev, struct bdtun, ch_dev);
 
         PDEBUG("got device_release on char dev\n");
-        spin_lock(&dev->lock);
+
+        if (mutex_lock_interruptible(&dev->mutex)) {
+                return -ERESTARTSYS;
+        }
+
         dev->ch_ucnt--;
         dev->ucnt--;
-        spin_unlock(&dev->lock);
+
+        mutex_unlock(&dev->mutex);
+
         return 0;
 }
 
@@ -520,52 +550,6 @@ unsigned int bdtunch_poll(struct file *filp, poll_table *wait) {
 }
 
 /*
- * Handle page faults of mmapped memory range. This function is used
- * to read / write data from / to bio-s.
- */
-/*int bdtunch_mmap_fault(
-        struct vm_area_struct *vma, struct vm_fault *vmf)
-{
-        struct page *page = NULL;
-        struct bdtun *dev = (struct bdtun *)vma->vm_private_data;
-        struct bdtun_bio_list_entry *entry;
-
-        PDEBUG("Running mmap_fault, offset %d", vmf->pgoff);
-
-        // Get data-current bio
-        entry = list_entry(
-                dev->data_current_bio,
-                struct bdtun_bio_list_entry, list
-        );
-
-        // Check page offset validity
-        if (vmf->pgoff >= entry->bio->bi_vcnt) {
-                return VM_FAULT_ERROR;
-                PDEBUG("mmap_fault error");
-		}
-
-        // We assume PAGE_SIZE aligned, n*PAGE_SIZE IO
-        page = entry->bio->bi_io_vec[vmf->pgoff].bv_page;
-
-        // Increment usage count
-        get_page(page);
-
-        vmf->page = page;
-
-        PDEBUG("mmap_fault ok");
-
-        return VM_FAULT_LOCKED;
-}*/
-
-/*
- * Operations structure used with mmapped virtual memory areas contains
- * a reference to the nopage function definied above.
- */
-/*static struct vm_operations_struct bdtunch_mmap_ops = {
-        .fault = bdtunch_mmap_fault
-};*/
-
-/*
  * mmap call handler. Sets up the memory mapping to the current bio
  * according to the nopage method.
  */
@@ -730,7 +714,6 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
          * Semaphores and stuff like that 
          */
         spin_lock_init(&new->bio_list_lock);
-        spin_lock_init(&new->lock);
 
         new->removing = 0;
         new->ucnt     = 0;
@@ -761,11 +744,13 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         }
         
         PDEBUG("setting up queue parameters\n");
-        // TODO: implicit cast, not nice
+
         new->capabilities = capabilities;
         queue->queuedata = new;
+
         blk_queue_make_request(queue, bdtun_make_request);
         blk_queue_logical_block_size(queue, block_size);
+
         if (capabilities & BDTUN_FLUSH) {
                 qflags |= REQ_FLUSH;
         }
@@ -860,8 +845,6 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
          */
         add_disk_work = kmalloc(sizeof(struct bdtun_add_disk_work), GFP_KERNEL);
         
-        // TODO: what if an instant REMOVE operation arrives BEFORE bdtun_do_add_disk could run? synchronization
-        // every other operation should hold the synch primitive, which relies on the existence of the device file
         INIT_WORK(&add_disk_work->work, bdtun_do_add_disk);
         add_disk_work->gd = new->bd_gd;
         add_disk_work->mutex = &new->mutex;
@@ -905,7 +888,6 @@ static int bdtun_resize_k(const char *name, uint64_t size)
         }
         
         set_capacity(dev->bd_gd, size / KERNEL_SECTOR_SIZE);
-        // TODO: Needs to be run AFTER add_disk, needs to synchronize, see also bdtun_create_k TODO
         ret = revalidate_disk(dev->bd_gd);
         
         if (ret) {
@@ -946,44 +928,43 @@ static int bdtun_remove_k(const char *name)
 {
         struct bdtun *dev;
         struct bdtun_bio_list_entry *entry;
-        struct mutex *dmutex;
-        
+
         dev = bdtun_find_device(name);
-        
+
         if (dev == NULL) {
                 PDEBUG("error removing '%s': no such device\n", name);
                 return -ENOENT;
-        }
-
-        spin_lock(&dev->lock);
-                
-        // TODO: removing should run only once, dev->removing flag could be used to check this
-        if (dev->ucnt) {
-                spin_unlock(&dev->lock);
-                return -EBUSY;
-        }
-        dev->removing = 1;
-        spin_unlock(&dev->lock);
-        
-        while (!list_empty(&dev->bio_list)) {
-                entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
-                bio_endio(entry->bio, -EIO);
-                list_del(dev->bio_list.next);
-                kfree(entry);
         }
 
         if (mutex_lock_interruptible(&dev->mutex)) {
                 return -ERESTARTSYS;
         }
 
-        dmutex = &dev->mutex;
-        
+        if (dev->ucnt || dev->removing) {
+                mutex_unlock(&dev->mutex);
+                return -EBUSY;
+        }
+
+        dev->removing = 1;
+
+        spin_lock(&dev->bio_list_lock);
+        while (!list_empty(&dev->bio_list)) {
+                entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
+                bio_endio(entry->bio, -EIO);
+                list_del(dev->bio_list.next);
+                kfree(entry);
+        }
+        spin_unlock(&dev->bio_list_lock);
+
         bdtun_remove_dev(dev);
-        
+
         /* Unlink and free device structure */
         list_del(&dev->list);
+
+        mutex_unlock(&dev->mutex);
+
         kfree(dev);
-        mutex_unlock(dmutex);
+
         PDEBUG("device removed from list\n");
 
         return 0;
