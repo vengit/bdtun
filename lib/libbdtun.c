@@ -19,33 +19,59 @@
  * Read a transfer request form a tunnel character device
  * 
  * After this, the read request will also be the data-current one.
+ * 
+ * Returns 0 on success, or the value returned by the read()
+ * function on error.
  */
 int bdtun_read_request(int fd, struct bdtun_txreq *req) {
-        return read(fd, req, BDTUN_TXREQ_HEADER_SIZE);
+        ssize_t res = read(fd, req, BDTUN_TXREQ_HEADER_SIZE);
+        if (res != BDTUN_TXREQ_HEADER_SIZE) {
+            return res;
+        }
+        return 0;
 }
 
 /*
  * Set the request for data operations
  *
  * Sets the current request mmap and send request data work on
+ * 
+ * Returns 0 on success, or the value returned by the write()
+ * function on error.
  */
 int bdtun_set_request(int fd, struct bdtun_txreq *req)
 {
-        return write(fd, &req->id, sizeof(req->id));
+        ssize_t res = write(fd, &req->id, sizeof(req->id));
+        if (res != sizeof(req->id)) {
+            return res;
+        }
+        return 0;
 }
 
 /*
  * Mmap the data in the data-current request
  *
- * req must be the data-current request, because mmap have to
- * be given a size argument, and it must match the data-current
- * request's size.
+ * req must be the data-current request, because mmap have to be
+ * given a size argument, and it must match the data-current request's
+ * size.
+ * 
+ * Returns a (void *) memory address on succes, or (void *) -1 on
+ * error.
  */
 void *bdtun_mmap_request(int fd, struct bdtun_txreq *req)
 {
         return mmap(0, req->size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 }
 
+/*
+ * Unmap the buffer returned by bdtun_mmap_request
+ *
+ * req must be the data-current request, because munmap have to be
+ * given a size argument, and it must match the data-current request's
+ * size
+ *
+ * Returns 0 on success, -1 on error, and errno is set appropriately. 
+ */
 int bdtun_munmap_request(void *buf, struct bdtun_txreq *req)
 {
         return munmap(buf, req->size);
@@ -55,36 +81,64 @@ int bdtun_munmap_request(void *buf, struct bdtun_txreq *req)
  * Copy the data from the data-current request.
  *
  * Should only be called for write requests.
+ * 
+ * Returns 0 on success, or the value returned by the read()
+ * function on error.
  */
 ssize_t bdtun_get_request_data(int fd, struct bdtun_txreq *req, void *buf)
 {
-        return read(fd, buf, req->size);
+        ssize_t res = read(fd, buf, req->size);
+        if (res != req->size) {
+            return res;
+        }
+        return 0;
 }
 
 /*
  * Copy data into the data-current request.
  *
  * Should only be called for read requests.
+ * 
+ * Returns 0 on succes, or the value returned by the write()
+ * call on error.
  */
 ssize_t bdtun_send_request_data(int fd, struct bdtun_txreq *req, void *buf)
 {
-        return write(fd, buf, req->size);
+        ssize_t res = write(fd, buf, req->size);
+        if (res != req->size) {
+            return res;
+        }
+        return 0;
 }
 
 /*
  * Tell the driver that the data-current bio is complete
+ * 
+ * Returns 0 on success, or the value returned by the write() call
+ * on error.
  */
 ssize_t bdtun_complete_request(int fd)
 {
-        return write(fd, "\0x00", 1);
+        ssize_t res = write(fd, "\0x00", 1);
+        if (res != 1) {
+            return res;
+        }
+        return 0;
 }
 
 /*
  * Tell the driver that the data-current bio is failed to complete
+ * 
+ * Returns 0 on success, or the value returned by the write() call
+ * on error.
  */
 ssize_t bdtun_fail_request(int fd)
 {
-        return write(fd, "\0x01", 1);
+        ssize_t res = write(fd, "\0x01", 1);
+        if (res != 1) {
+            return res;
+        }
+        return 0;
 }
 
 /*

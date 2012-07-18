@@ -147,11 +147,11 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
                 return MKREQ_RETVAL;
         }
         spin_unlock(&dev->lock);
-        
+
         new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_KERNEL);
-        
+
         PDEBUG("make_request called\n");
-        
+
         if (!new) {
                 PDEBUG("Could not allocate bio list entry\n");
                 bio_endio(bio, -EIO);
@@ -162,7 +162,7 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
         new->bio = bio;
 
         if (no_meta_bio(dev)) {
-                dev->meta_current_bio = new;
+                dev->meta_current_bio = &new->list;
         }
 
         spin_lock(&dev->bio_list_lock);
@@ -415,13 +415,6 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         }
 
         PDEBUG("request size is invalid, returning -EIO\n");
-        PDEBUG(
-                "count: %d, BDTUN_TXREQ_HEADER_SIZE: %d, write? %d, bio->bi_size: %d",
-                count,
-                BDTUN_TXREQ_HEADER_SIZE,
-                bio_data_dir(entry->bio) == WRITE,
-                entry->bio->bi_size
-        );
         return -EIO;
 }
 
@@ -530,7 +523,7 @@ unsigned int bdtunch_poll(struct file *filp, poll_table *wait) {
  * Handle page faults of mmapped memory range. This function is used
  * to read / write data from / to bio-s.
  */
-int bdtunch_mmap_fault(
+/*int bdtunch_mmap_fault(
         struct vm_area_struct *vma, struct vm_fault *vmf)
 {
         struct page *page = NULL;
@@ -562,15 +555,15 @@ int bdtunch_mmap_fault(
         PDEBUG("mmap_fault ok");
 
         return VM_FAULT_LOCKED;
-}
+}*/
 
 /*
  * Operations structure used with mmapped virtual memory areas contains
  * a reference to the nopage function definied above.
  */
-static struct vm_operations_struct bdtunch_mmap_ops = {
+/*static struct vm_operations_struct bdtunch_mmap_ops = {
         .fault = bdtunch_mmap_fault
-};
+};*/
 
 /*
  * mmap call handler. Sets up the memory mapping to the current bio
@@ -580,12 +573,55 @@ static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
 {
         struct bdtun *dev = (struct bdtun *)filp->private_data;
         unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
+        struct bdtun_bio_list_entry *entry;
+        struct bio_vec *bvec;
+        int pos = 0;
+        int i;
 
-        if (offset >= __pa(high_memory) || (filp->f_flags & O_SYNC)) {
-                vma->vm_flags |= VM_IO;
+        
+
+        if (offset & ~PAGE_MASK) {
+                PDEBUG("Offset isn't aligned: %ld\n", offset);
+                return -ENXIO;
         }
-        vma->vm_flags |= VM_RESERVED;
-        vma->vm_ops = &bdtunch_mmap_ops;
+
+        if (!(vma->vm_flags & VM_SHARED))
+        {
+                PDEBUG("Mappings must be shared.\n");
+                return -EINVAL;
+        }
+
+        vma->vm_flags |= VM_LOCKED;
+
+        spin_lock(&dev->bio_list_lock);
+        if (no_data_bio(dev)) {
+                spin_unlock(&dev->bio_list_lock);
+                PDEBUG("got mmap on empty data-current bio, returning -EIO\n");
+                return -EIO;
+        }
+        entry = list_entry(dev->data_current_bio, struct bdtun_bio_list_entry, list);
+        spin_unlock(&dev->bio_list_lock);
+
+        // Check size validity
+        if (vma->vm_end - vma->vm_start != entry->bio->bi_vcnt * PAGE_SIZE) {
+                PDEBUG("mmap error: invalid vma size %lu instead of %lu\n", vma->vm_end - vma->vm_start, entry->bio->bi_vcnt * PAGE_SIZE);
+                return -EIO;
+		}
+
+        bio_for_each_segment(bvec, entry->bio, i) {
+                if (remap_pfn_range(vma,
+                        vma->vm_start + PAGE_SIZE * pos,
+                        page_to_pfn(bvec->bv_page),
+                        PAGE_SIZE, PAGE_SHARED) < 0)
+                {
+                        printk("remap_pfn_range failed\n");
+                        return -EIO;
+                }
+                pos += 1;
+        }
+
+
+        //vma->vm_ops = &bdtunch_mmap_ops;
         vma->vm_private_data = (void *)dev;
 
         return 0;
