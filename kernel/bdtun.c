@@ -271,12 +271,16 @@ static int bdtunch_open(struct inode *inode, struct file *filp)
         dev->ucnt++;
         spin_unlock(&dev->ucnt_lock);
 
+        PDEBUG("got through ucnt");
+
         spin_lock(&dev->removing_lock);
         if (dev->removing) {
                 spin_unlock(&dev->removing_lock);
                 return -EBUSY;
         }
         spin_unlock(&dev->removing_lock);
+
+        PDEBUG("got through removing");
 
         filp->private_data = (void *)dev;
 
