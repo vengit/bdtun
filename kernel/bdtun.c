@@ -712,6 +712,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         /*
          * Init locks
          */
+        spin_lock_init(&new->ucnt_lock);
         spin_lock_init(&new->bio_list_lock);
         spin_lock_init(&new->removing_lock);
         spin_lock_init(&new->add_disk_finished_lock);
