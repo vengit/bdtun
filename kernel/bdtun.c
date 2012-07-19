@@ -45,7 +45,7 @@ static struct class *chclass;
 static struct device *ctrl_device;
 static int ctrl_devnum;
 static int ctrl_ucnt;
-static struct mutex mutex;
+static spinlock_t ctrl_ucnt_lock;
 
 /*
  * BDTun device structure
@@ -66,14 +66,28 @@ struct bdtun {
         wait_queue_head_t reader_queue;
 
         /* The bio_list_lock should be grabbed every time the list
-         * itself is manipulated */
+         * itself or the *_current_bio variables are manipulated */
         spinlock_t bio_list_lock;
 
+        /* When this flag is set, the device will be removed shortly.
+         * All IO should be failed and generally the device should be
+         * treated as nonexistent. */
         int removing;
+        /* Spinlock protecting the removing flag */
+        spinlock_t removing_lock;
 
-        /* Use count */
+        /* Use count. Incremented when tunnel char device is opened,
+         * and decremented when closed. Only one open can be called
+         * per tunnel device. Don't use the tunnel device in fork()ed
+         * children. */
         int ucnt;
-        int ch_ucnt;
+        /* Spin lock protecting use count */
+        spinlock_t ucnt_lock;
+
+        /* This variable signals the completion of the add_disk call */
+        int add_disk_finished;
+        /* Spin lock protecting the add_disk_finished variable */
+        spinlock_t add_disk_finished_lock;
 
         /* Block device related stuff */
         uint64_t bd_size;
@@ -81,12 +95,6 @@ struct bdtun {
         uint64_t bd_nsectors;
         int capabilities;
         struct gendisk *bd_gd;
-
-        /*
-         * The mutex must be grabbed whenever the device's properties
-         * are set (like resize)
-         */
-        struct mutex mutex;
 };
 
 #define no_meta_bio(dev) dev->meta_current_bio == &dev->bio_list
@@ -96,8 +104,7 @@ struct bdtun {
  * Disk add work queue.
  */
 struct bdtun_add_disk_work {
-        struct gendisk *gd;
-        struct mutex *mutex;
+        struct bdtun *dev;
         struct work_struct work;
 };
 
@@ -122,10 +129,13 @@ LIST_HEAD(device_list);
 static void bdtun_do_add_disk(struct work_struct *work)
 {
         struct bdtun_add_disk_work *w = container_of(work, struct bdtun_add_disk_work, work);
-        
-        add_disk(w->gd);
-        mutex_unlock(w->mutex);
-        PDEBUG("Unlocked mutex in bdtun_do_add_disk\n");
+
+        add_disk(w->dev->bd_gd);
+
+        spin_lock(&w->dev->add_disk_finished_lock);
+        w->dev->add_disk_finished = 1;
+        spin_unlock(&w->dev->add_disk_finished_lock);
+
         kfree(w);
 }
 
@@ -147,17 +157,13 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
         const int rw = bio_data_dir(bio);
         int cpu;
 
-        if (mutex_lock_interruptible(&dev->mutex)) {
-                bio_endio(bio, -EIO);
-                return MKREQ_RETVAL;
-        }
-
+        spin_lock(&dev->removing_lock);
         if (dev->removing) {
-                mutex_unlock(&dev->mutex);
+                spin_unlock(&dev->removing_lock);
                 bio_endio(bio, -EIO);
                 return MKREQ_RETVAL;
         }
-        mutex_unlock(&dev->mutex);
+        spin_unlock(&dev->removing_lock);
 
         new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_KERNEL);
 
@@ -194,19 +200,23 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
 
 static int bdtun_open(struct block_device *bdev, fmode_t mode)
 {
-        // TODO: what if the bdev structure is kfreed in the meantime we run??
         struct bdtun *dev = (struct bdtun *)(bdev->bd_disk->queue->queuedata);
         PDEBUG("bdtun_open()\n");
 
-        if (mutex_lock_interruptible(&dev->mutex)) {
-                return -ERESTARTSYS;
-        }
-
-        if (dev->removing) {
-                mutex_unlock(&dev->mutex);
+        spin_lock(&dev->add_disk_finished_lock);
+        if (dev->add_disk_finished) {
+                spin_unlock(&dev->add_disk_finished_lock);
                 return -ENOENT;
         }
-        mutex_unlock(&dev->mutex);
+        spin_unlock(&dev->add_disk_finished_lock);
+
+        spin_lock(&dev->removing_lock);
+        if (dev->removing) {
+                spin_unlock(&dev->removing_lock);
+                return -ENOENT;
+        }
+        spin_unlock(&dev->removing_lock);
+
         return 0;
 }
 
@@ -253,24 +263,20 @@ static int bdtunch_open(struct inode *inode, struct file *filp)
 
         PDEBUG("got device_open on char dev\n");
 
-        if (mutex_lock_interruptible(&dev->mutex)) {
-                return -ERESTARTSYS;
-        }
-
-        if (dev->ch_ucnt) {
-                mutex_unlock(&dev->mutex);
+        spin_lock(&dev->ucnt_lock);
+        if (dev->ucnt) {
+                spin_unlock(&dev->ucnt_lock);
                 return -EBUSY;
         }
-
-        if (dev->removing) {
-                mutex_unlock(&dev->mutex);
-                return -EBUSY;
-        }
-
-        dev->ch_ucnt++;
         dev->ucnt++;
+        spin_unlock(&dev->ucnt_lock);
 
-        mutex_unlock(&dev->mutex);
+        spin_lock(&dev->removing_lock);
+        if (dev->removing) {
+                spin_unlock(&dev->removing_lock);
+                return -EBUSY;
+        }
+        spin_unlock(&dev->removing_lock);
 
         filp->private_data = (void *)dev;
 
@@ -283,14 +289,9 @@ static int bdtunch_release(struct inode *inode, struct file *filp)
 
         PDEBUG("got device_release on char dev\n");
 
-        if (mutex_lock_interruptible(&dev->mutex)) {
-                return -ERESTARTSYS;
-        }
-
-        dev->ch_ucnt--;
+        spin_lock(&dev->ucnt_lock);
         dev->ucnt--;
-
-        mutex_unlock(&dev->mutex);
+        spin_unlock(&dev->ucnt_lock);
 
         return 0;
 }
@@ -697,12 +698,6 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
                 goto out;
         }
 
-        mutex_init(&new->mutex);
-        if (mutex_lock_interruptible(&new->mutex)) {
-                error = -ERESTARTSYS;
-                goto out;
-        }
-
         /*
          * Determine device size
          */
@@ -711,13 +706,15 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         new->bd_size       = size;
 
         /*
-         * Semaphores and stuff like that 
+         * Init locks
          */
         spin_lock_init(&new->bio_list_lock);
+        spin_lock_init(&new->removing_lock);
+        spin_lock_init(&new->add_disk_finished_lock);
 
+        new->ucnt = 0;
         new->removing = 0;
-        new->ucnt     = 0;
-        new->ch_ucnt  = 0;
+        new->add_disk_finished = 0;
 
         /*
          * Wait queue
@@ -846,16 +843,15 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         add_disk_work = kmalloc(sizeof(struct bdtun_add_disk_work), GFP_KERNEL);
         
         INIT_WORK(&add_disk_work->work, bdtun_do_add_disk);
-        add_disk_work->gd = new->bd_gd;
-        add_disk_work->mutex = &new->mutex;
+        add_disk_work->dev = new;
         queue_work(add_disk_q, &add_disk_work->work);
-        
+
         PDEBUG("finished setting up device %s\n", name);
-        
+
         try_module_get(THIS_MODULE);
-        
+
         return 0;
-        
+
         out_cdev_del:
                 cdev_del(&new->ch_dev);
         out_unregister_chrdev_region:
@@ -866,7 +862,6 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
                 blk_cleanup_queue(queue);
         out_kfree:
                 kfree(new);
-                mutex_unlock(&new->mutex);
         out:
                 return error;
 }
@@ -875,30 +870,24 @@ static int bdtun_resize_k(const char *name, uint64_t size)
 {
         struct bdtun *dev;
         int ret;
-        
+
         dev = bdtun_find_device(name);
-        
+
         if (dev == NULL) {
                 PDEBUG("error removing '%s': no such device\n", name);
                 return -ENOENT;
         }
-        
-        if (mutex_lock_interruptible(&dev->mutex)) {
-                return -ERESTARTSYS;
-        }
-        
+
         set_capacity(dev->bd_gd, size / KERNEL_SECTOR_SIZE);
         ret = revalidate_disk(dev->bd_gd);
-        
+
         if (ret) {
                 PDEBUG("could not revalidate_disk after capacity change\n");
-                mutex_unlock(&dev->mutex);
                 return ret;
         }
-        
+
         dev->bd_size = size;
-        mutex_unlock(&dev->mutex);
-        
+
         return 0;
 }
 
@@ -936,16 +925,16 @@ static int bdtun_remove_k(const char *name)
                 return -ENOENT;
         }
 
-        if (mutex_lock_interruptible(&dev->mutex)) {
-                return -ERESTARTSYS;
-        }
-
-        if (dev->ucnt || dev->removing) {
-                mutex_unlock(&dev->mutex);
+        spin_lock(&dev->removing_lock);
+        spin_lock(&dev->ucnt_lock);
+        if (dev->removing || dev->ucnt) {
+                spin_unlock(&dev->ucnt_lock);
+                spin_unlock(&dev->removing_lock);
                 return -EBUSY;
         }
-
         dev->removing = 1;
+        spin_unlock(&dev->ucnt_lock);
+        spin_unlock(&dev->removing_lock);
 
         spin_lock(&dev->bio_list_lock);
         while (!list_empty(&dev->bio_list)) {
@@ -960,8 +949,6 @@ static int bdtun_remove_k(const char *name)
 
         /* Unlink and free device structure */
         list_del(&dev->list);
-
-        mutex_unlock(&dev->mutex);
 
         kfree(dev);
 
@@ -1029,20 +1016,29 @@ static int bdtun_list_k(
 static int ctrl_open(struct inode *inode, struct file *filp)
 {
         PDEBUG("got device_open on master dev\n");
-        if (mutex_lock_interruptible(&mutex)) {
-                return -ERESTARTSYS;
+
+        spin_lock(&ctrl_ucnt_lock);
+        if (ctrl_ucnt > 0) {
+                spin_unlock(&ctrl_ucnt_lock);
+                return -EBUSY;
         }
+        ctrl_ucnt++;
+        spin_unlock(&ctrl_ucnt_lock);
+
         return 0;
 }
 
 static int ctrl_release(struct inode *inode, struct file *filp)
 {
         PDEBUG("got device_release on master dev\n");
-        mutex_unlock(&mutex);
+
+        spin_lock(&ctrl_ucnt_lock);
+        ctrl_ucnt--;
+        spin_unlock(&ctrl_ucnt_lock);
+
         return 0;
 }
 
-// TODO: these can cause race-conditions. refactor with mutex
 static char ctrl_response_buf[BDTUN_RESPONSE_SIZE];
 static int ctrl_response_size = 0;
 
@@ -1166,10 +1162,10 @@ static struct file_operations ctrl_ops = {
 static int __init bdtun_init(void)
 {
         int error;
-        
-        mutex_init(&mutex);
+
         ctrl_ucnt = 0;
-        
+        spin_lock_init(&ctrl_ucnt_lock);
+
         /*
          * Set up a work queue for adding disks
          */
