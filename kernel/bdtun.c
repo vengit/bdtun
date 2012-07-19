@@ -157,6 +157,11 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
         const int rw = bio_data_dir(bio);
         int cpu;
 
+        if (dev == NULL) {
+                bio_endio(bio, -EIO);
+                return MKREQ_RETVAL;
+        }
+
         spin_lock(&dev->removing_lock);
         if (dev->removing) {
                 spin_unlock(&dev->removing_lock);
@@ -912,6 +917,7 @@ static void bdtun_remove_dev(struct bdtun *dev)
 
         /* Destroy block devices */
         PDEBUG("removing block device\n");
+        dev->bd_gd->queue->queuedata = NULL;
         unregister_blkdev(dev->bd_gd->major, "bdtun");
         blk_cleanup_queue(dev->bd_gd->queue);
         del_gendisk(dev->bd_gd);
