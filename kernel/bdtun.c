@@ -204,7 +204,7 @@ static int bdtun_open(struct block_device *bdev, fmode_t mode)
         PDEBUG("bdtun_open()\n");
 
         spin_lock(&dev->add_disk_finished_lock);
-        if (dev->add_disk_finished) {
+        if (!dev->add_disk_finished) {
                 spin_unlock(&dev->add_disk_finished_lock);
                 return -ENOENT;
         }
