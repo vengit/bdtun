@@ -218,6 +218,7 @@ int main(int argc, char **argv) {
                 ret = bdtun_create(f, args.name, args.blocksize, args.size, capabilities);
                 break;
         case RESIZE:
+                ret = bdtun_resize(f, args.name, args.size);
                 break;
         case REMOVE:
                 ret = bdtun_remove(f, args.name);
