@@ -876,6 +876,8 @@ static int bdtun_resize_k(const char *name, uint64_t size)
         struct bdtun *dev;
         int ret;
 
+        PDEBUG("Resizing device %s\n", name);
+
         dev = bdtun_find_device(name);
 
         if (dev == NULL) {
