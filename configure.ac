@@ -39,7 +39,7 @@ AC_FUNC_REALLOC
 #                   lib
 #                   util])
 
-AC_CONFIG_FILES([Makefile include/Makefile lib/Makefile lib/bdtun.pc util/Makefile kernel/Makefile dkms.conf build-deb.sh DEBIAN/postinst DEBIAN/prerm])
+AC_CONFIG_FILES([Makefile include/Makefile lib/Makefile lib/bdtun.pc util/Makefile kernel/Makefile dkms.conf build-deb.sh DEBIAN/control DEBIAN/postinst DEBIAN/prerm])
 
 AC_OUTPUT
 

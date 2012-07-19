@@ -1,5 +1,5 @@
 Package: bdtun
-Version: 0.0.1
+Version: @VERSION@
 Section: kernel 
 Priority: optional
 Architecture: all
