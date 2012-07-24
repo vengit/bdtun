@@ -381,8 +381,8 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 
                 PDEBUG("checking for pending signals\n");
                 if (signal_pending(current)) {
-                        PDEBUG("signals are pending, returning -ERESTARTSYS\n");
-                        return -ERESTARTSYS;
+                        PDEBUG("signals are pending, returning -EINTR\n");
+                        return -EINTR;
                 }
                 
                 PDEBUG("no pending signals, checking out queue again\n");
