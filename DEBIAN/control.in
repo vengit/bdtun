@@ -5,14 +5,13 @@ Priority: optional
 Architecture: all
 Essential: no
 Depends: build-essential, linux-headers
-Pre-Depends: perl
+Pre-Depends:
 Recommends:
 Suggests:
-Installed-Size: 1024
+Installed-Size: 10000
 Maintainer: Tamas Laszlo Fabian [tamas.fabian@vengit.com]
 Conflicts:
 Replaces:
 Provides: bdtun
 Description: Bdtun is a kernel module that makes possible
              to develop block device drivers in userspace.
-

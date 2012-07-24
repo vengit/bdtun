@@ -183,11 +183,10 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
         new->start_time = jiffies;
         new->bio = bio;
 
+        spin_lock(&dev->bio_list_lock);
         if (no_meta_bio(dev)) {
                 dev->meta_current_bio = &new->list;
         }
-
-        spin_lock(&dev->bio_list_lock);
         list_add_tail(&new->list, &dev->bio_list);
         spin_unlock(&dev->bio_list_lock);
 
@@ -394,6 +393,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         finish_wait(&dev->reader_queue, &wait);
         PDEBUG("getting next entry\n");
 
+        /* Read request info */
         if (count == BDTUN_TXREQ_HEADER_SIZE) {
                 if (no_meta_bio(dev)) {
                     memset(buf, 0, BDTUN_TXREQ_HEADER_SIZE);
@@ -432,6 +432,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
 
         spin_unlock(&dev->bio_list_lock);
 
+        /* Read payload */
         if (bio_data_dir(entry->bio) == WRITE && count == entry->bio->bi_size)
         {
                 /* Transfer bio data. */
@@ -454,6 +455,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 return count;
         }
 
+        /* Error */
         PDEBUG("request size is invalid, returning -EIO\n");
         return -EIO;
 }
@@ -527,7 +529,7 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                                 kunmap(bvec->bv_page);
                                 /* We do not complete the bio here,
                                  * so the user process can try again */
-                                return -EFAULT;
+                                return -EIO;
                         }
                         kunmap(bvec->bv_page);
                         pos += bvec->bv_len;
@@ -535,7 +537,7 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                 return count;
         }
 
-        /* 4. It's a error */
+        /* 4. It's an error */
 
         PDEBUG("invalid request size from user returning -EIO.\n");
         return -EIO;
@@ -572,8 +574,6 @@ static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
         int pos = 0;
         int i;
 
-        
-
         if (offset & ~PAGE_MASK) {
                 PDEBUG("Offset isn't aligned: %ld\n", offset);
                 return -ENXIO;
@@ -608,14 +608,12 @@ static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
                         page_to_pfn(bvec->bv_page),
                         PAGE_SIZE, PAGE_SHARED) < 0)
                 {
-                        printk("remap_pfn_range failed\n");
+                        printk(KERN_ERR "remap_pfn_range failed\n");
                         return -EIO;
                 }
                 pos += 1;
         }
 
-
-        //vma->vm_ops = &bdtunch_mmap_ops;
         vma->vm_private_data = (void *)dev;
 
         return 0;
