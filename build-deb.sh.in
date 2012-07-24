@@ -27,7 +27,7 @@ make clean
 cp -r . $KMDIR
 
 rm -rf $KMDIR/.git
-rm -rf $MKDIR/*.deb
+rm -rf $KMDIR/*.deb
 
 dpkg -b $BUILDDIR bdtun-@VERSION@.deb
 
