@@ -208,12 +208,12 @@ static int bdtun_open(struct block_device *bdev, fmode_t mode)
         struct bdtun *dev = (struct bdtun *)(bdev->bd_disk->queue->queuedata);
         PDEBUG("bdtun_open()\n");
 
-        spin_lock(&dev->add_disk_finished_lock);
+/*        spin_lock(&dev->add_disk_finished_lock);
         if (!dev->add_disk_finished) {
                 spin_unlock(&dev->add_disk_finished_lock);
                 return -ENOENT;
         }
-        spin_unlock(&dev->add_disk_finished_lock);
+        spin_unlock(&dev->add_disk_finished_lock);*/
 
         spin_lock(&dev->removing_lock);
         if (dev->removing) {
