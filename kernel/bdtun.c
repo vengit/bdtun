@@ -44,8 +44,7 @@ struct bdtun_bio_list_entry {
 static struct class *chclass;
 static struct device *ctrl_device;
 static int ctrl_devnum;
-static int ctrl_ucnt;
-static spinlock_t ctrl_ucnt_lock;
+static atomic_t ctrl_lock = ATOMIC_INIT(1);
 
 /*
  * BDTun device structure
@@ -67,27 +66,15 @@ struct bdtun {
 
         /* The bio_list_lock should be grabbed every time the list
          * itself or the *_current_bio variables are manipulated */
-        spinlock_t bio_list_lock;
+        struct mutex bio_list_lock;
 
-        /* When this flag is set, the device will be removed shortly.
+        /* When this flag is 0, the device will be removed shortly.
          * All IO should be failed and generally the device should be
          * treated as nonexistent. */
-        int removing;
-        /* Spinlock protecting the removing flag */
-        spinlock_t removing_lock;
+        atomic_t removing;
 
-        /* Use count. Incremented when tunnel char device is opened,
-         * and decremented when closed. Only one open can be called
-         * per tunnel device. Don't use the tunnel device in fork()ed
-         * children. */
-        int ucnt;
-        /* Spin lock protecting use count */
-        spinlock_t ucnt_lock;
-
-        /* This variable signals the completion of the add_disk call */
-        int add_disk_finished;
-        /* Spin lock protecting the add_disk_finished variable */
-        spinlock_t add_disk_finished_lock;
+        /* This variable signals the completion of the add_disk call. */
+        atomic_t add_disk_finished;
 
         /* Block device related stuff */
         uint64_t bd_size;
@@ -131,11 +118,7 @@ static void bdtun_do_add_disk(struct work_struct *work)
         struct bdtun_add_disk_work *w = container_of(work, struct bdtun_add_disk_work, work);
 
         add_disk(w->dev->bd_gd);
-
-        spin_lock(&w->dev->add_disk_finished_lock);
-        w->dev->add_disk_finished = 1;
-        spin_unlock(&w->dev->add_disk_finished_lock);
-
+        atomic_set(&w->dev->add_disk_finished, 1);
         kfree(w);
 }
 
@@ -162,13 +145,10 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
                 return MKREQ_RETVAL;
         }
 
-        spin_lock(&dev->removing_lock);
-        if (dev->removing) {
-                spin_unlock(&dev->removing_lock);
+        if (!atomic_read(&dev->removing)) {
                 bio_endio(bio, -EIO);
                 return MKREQ_RETVAL;
         }
-        spin_unlock(&dev->removing_lock);
 
         new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_KERNEL);
 
@@ -183,12 +163,12 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
         new->start_time = jiffies;
         new->bio = bio;
 
-        spin_lock(&dev->bio_list_lock);
+        mutex_lock(&dev->bio_list_lock);
         if (no_meta_bio(dev)) {
                 dev->meta_current_bio = &new->list;
         }
         list_add_tail(&new->list, &dev->bio_list);
-        spin_unlock(&dev->bio_list_lock);
+        mutex_unlock(&dev->bio_list_lock);
 
         wake_up(&dev->reader_queue);
         PDEBUG("request queued\n");
@@ -207,19 +187,15 @@ static int bdtun_open(struct block_device *bdev, fmode_t mode)
         struct bdtun *dev = (struct bdtun *)(bdev->bd_disk->queue->queuedata);
         PDEBUG("bdtun_open()\n");
 
-/*        spin_lock(&dev->add_disk_finished_lock);
-        if (!dev->add_disk_finished) {
-                spin_unlock(&dev->add_disk_finished_lock);
+        if (dev == NULL) {
+                PDEBUG("queuedata is NULL!\n");
                 return -ENOENT;
         }
-        spin_unlock(&dev->add_disk_finished_lock);*/
 
-        spin_lock(&dev->removing_lock);
-        if (dev->removing) {
-                spin_unlock(&dev->removing_lock);
+        if (!atomic_read(&dev->removing)) {
+                PDEBUG("device is removing!\n");
                 return -ENOENT;
         }
-        spin_unlock(&dev->removing_lock);
 
         return 0;
 }
@@ -267,24 +243,10 @@ static int bdtunch_open(struct inode *inode, struct file *filp)
 
         PDEBUG("got device_open on char dev\n");
 
-        spin_lock(&dev->ucnt_lock);
-        if (dev->ucnt) {
-                spin_unlock(&dev->ucnt_lock);
+        if (!atomic_read(&dev->removing)) {
+                PDEBUG("device is removing\n");
                 return -EBUSY;
         }
-        dev->ucnt++;
-        spin_unlock(&dev->ucnt_lock);
-
-        PDEBUG("got through ucnt");
-
-        spin_lock(&dev->removing_lock);
-        if (dev->removing) {
-                spin_unlock(&dev->removing_lock);
-                return -EBUSY;
-        }
-        spin_unlock(&dev->removing_lock);
-
-        PDEBUG("got through removing");
 
         filp->private_data = (void *)dev;
 
@@ -293,14 +255,7 @@ static int bdtunch_open(struct inode *inode, struct file *filp)
 
 static int bdtunch_release(struct inode *inode, struct file *filp)
 {
-        struct bdtun *dev = container_of(inode->i_cdev, struct bdtun, ch_dev);
-
         PDEBUG("got device_release on char dev\n");
-
-        spin_lock(&dev->ucnt_lock);
-        dev->ucnt--;
-        spin_unlock(&dev->ucnt_lock);
-
         return 0;
 }
 
@@ -369,11 +324,11 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         prepare_to_wait(&dev->reader_queue, &wait, TASK_INTERRUPTIBLE);
 
         PDEBUG("grabbing spinlock on out queue\n");
-        spin_lock(&dev->bio_list_lock);
+        mutex_lock(&dev->bio_list_lock);
 
         if (list_empty(&dev->bio_list)) {
                 PDEBUG("list empty, releasing spinlock for out queue\n");
-                spin_unlock(&dev->bio_list_lock);
+                mutex_unlock(&dev->bio_list_lock);
                 PDEBUG("calling schedulle\n");
                 schedule();
                 PDEBUG("awaken, finishing wait\n");
@@ -398,7 +353,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 if (no_meta_bio(dev)) {
                     memset(buf, 0, BDTUN_TXREQ_HEADER_SIZE);
                     dev->meta_current_bio = dev->meta_current_bio->next;
-                    spin_unlock(&dev->bio_list_lock);
+                    mutex_unlock(&dev->bio_list_lock);
                     return count;
                 }
 
@@ -414,14 +369,14 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 req->size   = entry->bio->bi_size;
 
                 dev->meta_current_bio = dev->meta_current_bio->next;
-                spin_unlock(&dev->bio_list_lock);
+                mutex_unlock(&dev->bio_list_lock);
 
                 return count;
         }
 
         if (no_data_bio(dev)) {
             PDEBUG("Got non-header read, but there's no current data bio.\n");
-            spin_unlock(&dev->bio_list_lock);
+            mutex_unlock(&dev->bio_list_lock);
             return -EIO;
         }
 
@@ -430,7 +385,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 struct bdtun_bio_list_entry, list
         );
 
-        spin_unlock(&dev->bio_list_lock);
+        mutex_unlock(&dev->bio_list_lock);
 
         /* Read payload */
         if (bio_data_dir(entry->bio) == WRITE && count == entry->bio->bi_size)
@@ -481,24 +436,24 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
 
         /* 2. It's a set data-current bio request */
         if (count == sizeof(uintptr_t)) {
-                spin_lock(&dev->bio_list_lock);
+                mutex_lock(&dev->bio_list_lock);
                 dev->data_current_bio = (struct list_head *)*(uintptr_t *)buf;
-                spin_unlock(&dev->bio_list_lock);
+                mutex_unlock(&dev->bio_list_lock);
                 return count;
         }
 
-        spin_lock(&dev->bio_list_lock);
+        mutex_lock(&dev->bio_list_lock);
         if (no_data_bio(dev)) {
-                spin_unlock(&dev->bio_list_lock);
+                mutex_unlock(&dev->bio_list_lock);
                 PDEBUG("got write on empty data-current bio, returning -EIO");
                 return -EIO;
         }
         entry = list_entry(dev->data_current_bio, struct bdtun_bio_list_entry, list);
-        spin_unlock(&dev->bio_list_lock);
+        mutex_unlock(&dev->bio_list_lock);
 
         /* 1. It's a completion byte. */
         if (count == 1) {
-                spin_lock(&dev->bio_list_lock);
+                mutex_lock(&dev->bio_list_lock);
                 if (buf[0]) {
                         PDEBUG("user signaled failure, failing bio.\n");
                         bio_endio(entry->bio, -EIO);
@@ -512,7 +467,7 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                         dev->meta_current_bio = dev->meta_current_bio->next;
                 }
                 list_del(&entry->list);
-                spin_unlock(&dev->bio_list_lock);
+                mutex_unlock(&dev->bio_list_lock);
                 kfree(entry);
                 return count;
         }
@@ -551,12 +506,12 @@ unsigned int bdtunch_poll(struct file *filp, poll_table *wait) {
 
         mask |= POLLOUT | POLLWRNORM; /* writable */
 
-        spin_lock(&dev->bio_list_lock);
+        mutex_lock(&dev->bio_list_lock);
         if (!list_empty(&dev->bio_list)) {
                 PDEBUG("list is not empty, setting mask\n");
                 mask |= POLLIN | POLLRDNORM; /* readable */
         }
-        spin_unlock(&dev->bio_list_lock);
+        mutex_unlock(&dev->bio_list_lock);
 
         return mask;
 }
@@ -587,14 +542,14 @@ static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
 
         vma->vm_flags |= VM_LOCKED;
 
-        spin_lock(&dev->bio_list_lock);
+        mutex_lock(&dev->bio_list_lock);
         if (no_data_bio(dev)) {
-                spin_unlock(&dev->bio_list_lock);
+                mutex_unlock(&dev->bio_list_lock);
                 PDEBUG("got mmap on empty data-current bio, returning -EIO\n");
                 return -EIO;
         }
         entry = list_entry(dev->data_current_bio, struct bdtun_bio_list_entry, list);
-        spin_unlock(&dev->bio_list_lock);
+        mutex_unlock(&dev->bio_list_lock);
 
         // Check size validity
         if (vma->vm_end - vma->vm_start != entry->bio->bi_vcnt * PAGE_SIZE) {
@@ -608,7 +563,7 @@ static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
                         page_to_pfn(bvec->bv_page),
                         PAGE_SIZE, PAGE_SHARED) < 0)
                 {
-                        printk(KERN_ERR "remap_pfn_range failed\n");
+                        PDEBUG("remap_pfn_range failed\n");
                         return -EIO;
                 }
                 pos += 1;
@@ -668,20 +623,24 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         // TODO: relying on the fact, that only one process can open the control chardev at the same time. But what if,
         // the process forks itself AFTER? We should use Locks here too
         if (bdtun_find_device(name)) {
+                PDEBUG("Device %s already exsits\n", name);
                 return -EEXIST;
         }
 
         if (block_size < 512 || block_size > PAGE_SIZE) {
+                PDEBUG("Block size must be between 512 and PAGE_SIZE (%lu in this case)\n", PAGE_SIZE);
                 return -EINVAL;
         }
 
         /* Check if block_size is a power of two */
         if (block_size & (block_size - 1)) {
+                PDEBUG("Block size must be a power of two\n");
                 return -EINVAL;
         }
 
         /* Check if size is a multiple of block_size */
         if (size % block_size) {
+                PDEBUG("Size must be a multiple of the block size");
                 return -EINVAL;
         }
 
@@ -715,14 +674,10 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         /*
          * Init locks
          */
-        spin_lock_init(&new->ucnt_lock);
-        spin_lock_init(&new->bio_list_lock);
-        spin_lock_init(&new->removing_lock);
-        spin_lock_init(&new->add_disk_finished_lock);
+        mutex_init(&new->bio_list_lock);
 
-        new->ucnt = 0;
-        new->removing = 0;
-        new->add_disk_finished = 0;
+        atomic_set(&new->removing, 1);
+        atomic_set(&new->add_disk_finished, 0);
 
         /*
          * Wait queue
@@ -778,7 +733,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         /*
          * Get registered.
          */
-        PDEBUG("registering blovk device\n");
+        PDEBUG("registering block device\n");
         bd_major = register_blkdev(0, "bdtun");
         if (bd_major < 0) {
                 PDEBUG("unable to get major number\n");
@@ -936,25 +891,20 @@ static int bdtun_remove_k(const char *name)
                 return -ENOENT;
         }
 
-        spin_lock(&dev->removing_lock);
-        spin_lock(&dev->ucnt_lock);
-        if (dev->removing || dev->ucnt) {
-                spin_unlock(&dev->ucnt_lock);
-                spin_unlock(&dev->removing_lock);
+        if (!atomic_dec_and_test(&dev->removing)) {
+                atomic_inc(&dev->removing);
+                PDEBUG("won't remove: block device is already being removed\n");
                 return -EBUSY;
         }
-        dev->removing = 1;
-        spin_unlock(&dev->ucnt_lock);
-        spin_unlock(&dev->removing_lock);
 
-        spin_lock(&dev->bio_list_lock);
+        mutex_lock(&dev->bio_list_lock);
         while (!list_empty(&dev->bio_list)) {
                 entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
                 bio_endio(entry->bio, -EIO);
                 list_del(dev->bio_list.next);
                 kfree(entry);
         }
-        spin_unlock(&dev->bio_list_lock);
+        mutex_unlock(&dev->bio_list_lock);
 
         bdtun_remove_dev(dev);
 
@@ -975,6 +925,7 @@ static int bdtun_info_k(char *name, struct bdtun_info *device_info)
         dev = bdtun_find_device(name);
         
         if (dev == NULL) {
+                PDEBUG("There is no such device\n");
                 return -ENOENT;
         }
         
@@ -1028,13 +979,11 @@ static int ctrl_open(struct inode *inode, struct file *filp)
 {
         PDEBUG("got device_open on master dev\n");
 
-        spin_lock(&ctrl_ucnt_lock);
-        if (ctrl_ucnt > 0) {
-                spin_unlock(&ctrl_ucnt_lock);
+        if (!atomic_dec_and_test(&ctrl_lock)) {
+                atomic_inc(&ctrl_lock);
+                PDEBUG("control device is busy\n");
                 return -EBUSY;
         }
-        ctrl_ucnt++;
-        spin_unlock(&ctrl_ucnt_lock);
 
         return 0;
 }
@@ -1043,9 +992,7 @@ static int ctrl_release(struct inode *inode, struct file *filp)
 {
         PDEBUG("got device_release on master dev\n");
 
-        spin_lock(&ctrl_ucnt_lock);
-        ctrl_ucnt--;
-        spin_unlock(&ctrl_ucnt_lock);
+        atomic_inc(&ctrl_lock);
 
         return 0;
 }
@@ -1061,6 +1008,7 @@ static ssize_t ctrl_read(struct file *filp, char *buf, size_t count, loff_t *f_p
         int tmp = ctrl_response_size;
         
         if (ctrl_response_size < 0) {
+                PDEBUG("control response size is invalid: %d\n", ctrl_response_size);
                 return -EIO;
         }
         
@@ -1092,6 +1040,7 @@ static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff
         switch (c->command) {
         case BDTUN_COMM_CREATE:
                 if (count < BDTUN_COMM_CREATE_SIZE) {
+                        PDEBUG("Invalid commad packet size\n");
                         return -EIO;
                 }
                 ret = bdtun_create_k(c->create.name, c->create.blocksize, c->create.size, c->create.capabilities);
@@ -1103,6 +1052,7 @@ static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff
                 break;
         case BDTUN_COMM_REMOVE:
                 if (count < BDTUN_COMM_REMOVE_SIZE) {
+                        PDEBUG("Invalid commad packet size\n");
                         return -EIO;
                 }
                 
@@ -1115,6 +1065,7 @@ static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff
                 break;
         case BDTUN_COMM_INFO:
                 if (count < BDTUN_COMM_INFO_SIZE) {
+                        PDEBUG("Invalid commad packet size\n");
                         return -EIO;
                 }
                 
@@ -1129,6 +1080,7 @@ static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff
                 break;
         case BDTUN_COMM_LIST:
                 if (count < BDTUN_COMM_LIST_SIZE) {
+                        PDEBUG("Invalid commad packet size\n");
                         return -EIO;
                 }
                 
@@ -1140,6 +1092,7 @@ static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff
                 break;
         case BDTUN_COMM_RESIZE:
                 if (count < BDTUN_COMM_RESIZE_SIZE) {
+                        PDEBUG("Invalid commad packet size\n");
                         return -EIO;
                 }
                 
@@ -1151,6 +1104,7 @@ static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff
                 
                 break;
         default:
+                PDEBUG("Invalid commad\n");
                 return -EIO;
         }
         
@@ -1173,9 +1127,6 @@ static struct file_operations ctrl_ops = {
 static int __init bdtun_init(void)
 {
         int error;
-
-        ctrl_ucnt = 0;
-        spin_lock_init(&ctrl_ucnt_lock);
 
         /*
          * Set up a work queue for adding disks
@@ -1236,6 +1187,7 @@ static int __init bdtun_init(void)
         out_adq:
                 destroy_workqueue(add_disk_q);
         out_err:
+                PDEBUG("Error during module initialization\n");
                 return -ENOMEM;
 }
 
