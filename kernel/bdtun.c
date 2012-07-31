@@ -1,5 +1,5 @@
 /*
- * A simple block device to forward requests to userspace
+ * A block device taht forwards bios to userspace
  */
 
 #include <linux/module.h>
@@ -68,10 +68,16 @@ struct bdtun {
          * itself or the *_current_bio variables are manipulated */
         struct mutex bio_list_lock;
 
-        /* When this flag is 0, the device will be removed shortly.
-         * All IO should be failed and generally the device should be
-         * treated as nonexistent. */
-        atomic_t removing;
+        /* When this flag is 1, the device will be removed shortly.
+         * The device should be treated as nonexistent, e.g. shouldn't
+         * let to be opened. */
+        int removing;
+        /* Use count of the device. Incremented on open,
+         * decremented on close. Any open-close operation counts. */
+        int ucnt;
+        /* This lock should be held when manipulating the above two
+         * variables. */
+        spinlock_t ru_lock;
 
         /* This variable signals the completion of the add_disk call. */
         atomic_t add_disk_finished;
@@ -140,16 +146,6 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
         const int rw = bio_data_dir(bio);
         int cpu;
 
-        if (dev == NULL) {
-                bio_endio(bio, -EIO);
-                return MKREQ_RETVAL;
-        }
-
-        if (!atomic_read(&dev->removing)) {
-                bio_endio(bio, -EIO);
-                return MKREQ_RETVAL;
-        }
-
         new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_KERNEL);
 
         PDEBUG("make_request called\n");
@@ -187,22 +183,28 @@ static int bdtun_open(struct block_device *bdev, fmode_t mode)
         struct bdtun *dev = (struct bdtun *)(bdev->bd_disk->queue->queuedata);
         PDEBUG("bdtun_open()\n");
 
-        if (dev == NULL) {
-                PDEBUG("queuedata is NULL!\n");
+        spin_lock(&dev->ru_lock);
+        if (dev->removing) {
+                spin_unlock(&dev->ru_lock);
+                PDEBUG("bdtun_open: device is being removed\n");
                 return -ENOENT;
         }
-
-        if (!atomic_read(&dev->removing)) {
-                PDEBUG("device is removing!\n");
-                return -ENOENT;
-        }
+        dev->ucnt++;
+        spin_unlock(&dev->ru_lock);
 
         return 0;
 }
 
 static int bdtun_release(struct gendisk *gd, fmode_t mode)
 {
+        struct bdtun *dev = (struct bdtun *)(gd->queue->queuedata);
+
         PDEBUG("bdtun_release()\n");
+
+        spin_lock(&dev->ru_lock);
+        dev->ucnt--;
+        spin_unlock(&dev->ru_lock);
+
         return 0;
 }
 
@@ -243,10 +245,14 @@ static int bdtunch_open(struct inode *inode, struct file *filp)
 
         PDEBUG("got device_open on char dev\n");
 
-        if (!atomic_read(&dev->removing)) {
+        spin_lock(&dev->ru_lock);
+        if (dev->removing) {
+                spin_unlock(&dev->ru_lock);
                 PDEBUG("device is removing\n");
                 return -EBUSY;
         }
+        dev->ucnt++;
+        spin_unlock(&dev->ru_lock);
 
         filp->private_data = (void *)dev;
 
@@ -255,7 +261,14 @@ static int bdtunch_open(struct inode *inode, struct file *filp)
 
 static int bdtunch_release(struct inode *inode, struct file *filp)
 {
+        struct bdtun *dev = container_of(inode->i_cdev, struct bdtun, ch_dev);
+
         PDEBUG("got device_release on char dev\n");
+
+        spin_lock(&dev->ru_lock);
+        dev->ucnt--;
+        spin_unlock(&dev->ru_lock);
+
         return 0;
 }
 
@@ -675,8 +688,11 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
          * Init locks
          */
         mutex_init(&new->bio_list_lock);
+        spin_lock_init(&new->ru_lock);
 
-        atomic_set(&new->removing, 1);
+        new->ucnt  = 0;
+        new->removing = 0;
+
         atomic_set(&new->add_disk_finished, 0);
 
         /*
@@ -856,7 +872,6 @@ static int bdtun_resize_k(const char *name, uint64_t size)
         return 0;
 }
 
-
 static void bdtun_remove_dev(struct bdtun *dev)
 {
         /* Destroy character devices */
@@ -891,11 +906,19 @@ static int bdtun_remove_k(const char *name)
                 return -ENOENT;
         }
 
-        if (!atomic_dec_and_test(&dev->removing)) {
-                atomic_inc(&dev->removing);
+        spin_lock(&dev->ru_lock);
+        if (dev->removing) {
+                spin_unlock(&dev->ru_lock);
                 PDEBUG("won't remove: block device is already being removed\n");
                 return -EBUSY;
         }
+        if (dev->ucnt) {
+                spin_unlock(&dev->ru_lock);
+                PDEBUG("won't remove: block device is in use");
+                return -EBUSY;
+        }
+        dev->removing = 1;
+        spin_unlock(&dev->ru_lock);
 
         mutex_lock(&dev->bio_list_lock);
         while (!list_empty(&dev->bio_list)) {
