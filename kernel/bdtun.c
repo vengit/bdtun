@@ -64,8 +64,9 @@ struct bdtun {
         struct list_head *data_current_bio;
         wait_queue_head_t reader_queue;
 
-        /* The bio_list_lock should be grabbed every time the list
-         * itself or the *_current_bio variables are manipulated */
+        /* These locks should be grabbed every time the lists
+         * itselves or the data_current_bio variable are manipulated.
+         * Alwasy grab incoming first, then pending. */
         struct mutex incoming_bio_list_lock;
         struct mutex pending_bio_list_lock;
 
@@ -266,6 +267,12 @@ static int bdtunch_release(struct inode *inode, struct file *filp)
 
         PDEBUG("got device_release on char dev\n");
 
+        mutex_lock(&dev->incoming_bio_list_lock);
+        mutex_lock(&dev->pending_bio_list_lock);
+        list_splice_tail_init(&dev->pending_bio_list, &dev->incoming_bio_list);
+        mutex_unlock(&dev->pending_bio_list_lock);
+        mutex_unlock(&dev->incoming_bio_list_lock);
+
         spin_lock(&dev->ru_lock);
         dev->ucnt--;
         spin_unlock(&dev->ru_lock);
@@ -376,6 +383,10 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 req->flags  = bdtun_translate_bio_rw(entry->bio->bi_rw);
                 req->offset = entry->bio->bi_sector * KERNEL_SECTOR_SIZE;
                 req->size   = entry->bio->bi_size;
+
+                mutex_lock(&dev->pending_bio_list_lock);
+                list_move_tail(&entry->list, &dev->pending_bio_list);
+                mutex_unlock(&dev->pending_bio_list_lock);
 
                 mutex_unlock(&dev->incoming_bio_list_lock);
 
