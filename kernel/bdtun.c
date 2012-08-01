@@ -470,9 +470,11 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
 
         /* 2. It's a "set data-current bio" request */
         if (count == sizeof(uintptr_t)) {
+                PDEBUG("setting current bio\n");
                 mutex_lock(&dev->pending_bio_list_lock);
                 dev->data_current_bio = (struct list_head *)*(uintptr_t *)buf;
                 mutex_unlock(&dev->pending_bio_list_lock);
+                PDEBUG("current bio set successfully\n");
                 return count;
         }
 
@@ -501,6 +503,7 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         /* 3. It's data */
         if (bio_data_dir(entry->bio) == READ &&
             count == entry->bio->bi_size) {
+                PDEBUG("got data read request\n");
                 bio_for_each_segment(bvec, entry->bio, i) {
                         void *kaddr = kmap(bvec->bv_page);
                         if(copy_from_user(kaddr+bvec->bv_offset,
