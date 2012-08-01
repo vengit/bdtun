@@ -342,7 +342,6 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
 
         out_list_is_empty:
 
-        // TODO: rethink it without wait queue. Force US to use poll.
         PDEBUG("Preparing to wait\n");
         prepare_to_wait(&dev->reader_queue, &wait, TASK_INTERRUPTIBLE);
 
@@ -350,9 +349,9 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         mutex_lock(&dev->incoming_bio_list_lock);
 
         if (list_empty(&dev->incoming_bio_list)) {
-                PDEBUG("list empty, releasing spinlock for out queue\n");
+                PDEBUG("list empty, releasing lock for out queue\n");
                 mutex_unlock(&dev->incoming_bio_list_lock);
-                PDEBUG("calling schedulle\n");
+                PDEBUG("calling schedule\n");
                 schedule();
                 PDEBUG("awaken, finishing wait\n");
                 finish_wait(&dev->reader_queue, &wait);
@@ -369,10 +368,10 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
 
         PDEBUG("list containts bio-s, finishing wait\n");
         finish_wait(&dev->reader_queue, &wait);
-        PDEBUG("getting next entry\n");
 
         /* Read request info */
         if (count == BDTUN_TXREQ_HEADER_SIZE) {
+                PDEBUG("got header request\n");
                 entry = list_entry(
                         dev->incoming_bio_list.next,
                         struct bdtun_bio_list_entry, list
@@ -385,15 +384,34 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 req->size   = entry->bio->bi_size;
 
                 mutex_lock(&dev->pending_bio_list_lock);
+                int a=0, b=0;
+                struct list_head *pos;
+                list_for_each(pos, &dev->incoming_bio_list) {
+                        a++;
+                }
+                list_for_each(pos, &dev->pending_bio_list) {
+                        b++;
+                }
+                PDEBUG("List sizes before move: incoming: %d, pending: %d", a, b);
                 list_move_tail(&entry->list, &dev->pending_bio_list);
+                a = 0; b = 0;
+                list_for_each(pos, &dev->incoming_bio_list) {
+                        a++;
+                }
+                list_for_each(pos, &dev->pending_bio_list) {
+                        b++;
+                }
+                PDEBUG("List sizes after move: incoming: %d, pending: %d", a, b);
                 mutex_unlock(&dev->pending_bio_list_lock);
 
                 mutex_unlock(&dev->incoming_bio_list_lock);
 
+                PDEBUG("header request served\n");
                 return count;
         }
         mutex_unlock(&dev->incoming_bio_list_lock);
 
+        PDEBUG("got non-header request, getting current bio\n");
         mutex_lock(&dev->pending_bio_list_lock);
         entry = list_entry(
                 dev->data_current_bio,
@@ -404,6 +422,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         /* Read payload */
         if (bio_data_dir(entry->bio) == WRITE && count == entry->bio->bi_size)
         {
+                PDEBUG("got write request, trasferring data\n");
                 /* Transfer bio data. */
                 bio_for_each_segment(bvec, entry->bio, i) {
                         void *kaddr = kmap(bvec->bv_page);
@@ -421,6 +440,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                         kunmap(bvec->bv_page);
                         pos += bvec->bv_len;
                 }
+                PDEBUG("transfer completed\n");
                 return count;
         }
 
