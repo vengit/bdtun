@@ -59,21 +59,23 @@ struct bdtun {
         struct device *ch_device;
 
         /* bios waiting for processing */
-        struct list_head bio_list;
-        struct list_head *meta_current_bio;
+        struct list_head incoming_bio_list;
+        struct list_head pending_bio_list;
         struct list_head *data_current_bio;
         wait_queue_head_t reader_queue;
 
         /* The bio_list_lock should be grabbed every time the list
          * itself or the *_current_bio variables are manipulated */
-        struct mutex bio_list_lock;
+        struct mutex incoming_bio_list_lock;
+        struct mutex pending_bio_list_lock;
 
         /* When this flag is 1, the device will be removed shortly.
          * The device should be treated as nonexistent, e.g. shouldn't
          * let to be opened. */
         int removing;
         /* Use count of the device. Incremented on open,
-         * decremented on close. Any open-close operation counts. */
+         * decremented on close. Ops on block and tunnel devices
+         * counted. */
         int ucnt;
         /* This lock should be held when manipulating the above two
          * variables. */
@@ -89,9 +91,6 @@ struct bdtun {
         int capabilities;
         struct gendisk *bd_gd;
 };
-
-#define no_meta_bio(dev) dev->meta_current_bio == &dev->bio_list
-#define no_data_bio(dev) dev->data_current_bio == &dev->bio_list
 
 /*
  * Disk add work queue.
@@ -116,6 +115,9 @@ LIST_HEAD(device_list);
 /*
  * We can tweak our hardware sector size, but the kernel talks to us
  * in terms of small sectors, always.
+ * 
+ * TODO: we really need to define this? Is there a kernel macro
+ * for this?
  */
 #define KERNEL_SECTOR_SIZE 512
 
@@ -159,12 +161,9 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
         new->start_time = jiffies;
         new->bio = bio;
 
-        mutex_lock(&dev->bio_list_lock);
-        if (no_meta_bio(dev)) {
-                dev->meta_current_bio = &new->list;
-        }
-        list_add_tail(&new->list, &dev->bio_list);
-        mutex_unlock(&dev->bio_list_lock);
+        mutex_lock(&dev->incoming_bio_list_lock);
+        list_add_tail(&new->list, &dev->incoming_bio_list);
+        mutex_unlock(&dev->incoming_bio_list_lock);
 
         wake_up(&dev->reader_queue);
         PDEBUG("request queued\n");
@@ -236,9 +235,8 @@ static struct block_device_operations bdtun_ops = {
 };
 
 /*
- * Character device
+ * Called when tunnel character device is opened
  */
-
 static int bdtunch_open(struct inode *inode, struct file *filp)
 {
         struct bdtun *dev = container_of(inode->i_cdev, struct bdtun, ch_dev);
@@ -259,6 +257,9 @@ static int bdtunch_open(struct inode *inode, struct file *filp)
         return 0;
 }
 
+/*
+ *  Called when tunnel character device is closed
+ */
 static int bdtunch_release(struct inode *inode, struct file *filp)
 {
         struct bdtun *dev = container_of(inode->i_cdev, struct bdtun, ch_dev);
@@ -278,6 +279,8 @@ static int bdtunch_release(struct inode *inode, struct file *filp)
  * with the kernel module even if the kernel is changed and the
  * module is recompiled.
  */
+// TODO: make a macro that checks the existence of stuff and only
+// compiles what necessary
 static unsigned long bdtun_translate_bio_rw(unsigned long rw) {
         return
         (rw & REQ_WRITE ? BDTUN_REQ_WRITE : 0 ) |
@@ -317,8 +320,8 @@ static unsigned long bdtun_translate_bio_rw(unsigned long rw) {
 }
 
 /*
- * Sends metadata of the meta-current bio, or data of the
- * data-current bio
+ * Sends metadata of the current bio in the incoming list, or data of
+ * the data-current bio
  */
 static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *f_pos)
 {
@@ -336,23 +339,23 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         PDEBUG("Preparing to wait\n");
         prepare_to_wait(&dev->reader_queue, &wait, TASK_INTERRUPTIBLE);
 
-        PDEBUG("grabbing spinlock on out queue\n");
-        mutex_lock(&dev->bio_list_lock);
+        PDEBUG("grabbing lock on incoming list\n");
+        mutex_lock(&dev->incoming_bio_list_lock);
 
-        if (list_empty(&dev->bio_list)) {
+        if (list_empty(&dev->incoming_bio_list)) {
                 PDEBUG("list empty, releasing spinlock for out queue\n");
-                mutex_unlock(&dev->bio_list_lock);
+                mutex_unlock(&dev->incoming_bio_list_lock);
                 PDEBUG("calling schedulle\n");
                 schedule();
                 PDEBUG("awaken, finishing wait\n");
                 finish_wait(&dev->reader_queue, &wait);
-                
+
                 PDEBUG("checking for pending signals\n");
                 if (signal_pending(current)) {
                         PDEBUG("signals are pending, returning -EINTR\n");
                         return -EINTR;
                 }
-                
+
                 PDEBUG("no pending signals, checking out queue again\n");
                 goto out_list_is_empty;
         }
@@ -363,15 +366,8 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
 
         /* Read request info */
         if (count == BDTUN_TXREQ_HEADER_SIZE) {
-                if (no_meta_bio(dev)) {
-                    memset(buf, 0, BDTUN_TXREQ_HEADER_SIZE);
-                    dev->meta_current_bio = dev->meta_current_bio->next;
-                    mutex_unlock(&dev->bio_list_lock);
-                    return count;
-                }
-
                 entry = list_entry(
-                        dev->meta_current_bio,
+                        dev->incoming_bio_list.next,
                         struct bdtun_bio_list_entry, list
                 );
 
@@ -381,24 +377,18 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 req->offset = entry->bio->bi_sector * KERNEL_SECTOR_SIZE;
                 req->size   = entry->bio->bi_size;
 
-                dev->meta_current_bio = dev->meta_current_bio->next;
-                mutex_unlock(&dev->bio_list_lock);
+                mutex_unlock(&dev->incoming_bio_list_lock);
 
                 return count;
         }
+        mutex_unlock(&dev->incoming_bio_list_lock);
 
-        if (no_data_bio(dev)) {
-            PDEBUG("Got non-header read, but there's no current data bio.\n");
-            mutex_unlock(&dev->bio_list_lock);
-            return -EIO;
-        }
-
+        mutex_lock(&dev->pending_bio_list_lock);
         entry = list_entry(
                 dev->data_current_bio,
                 struct bdtun_bio_list_entry, list
         );
-
-        mutex_unlock(&dev->bio_list_lock);
+        mutex_unlock(&dev->pending_bio_list_lock);
 
         /* Read payload */
         if (bio_data_dir(entry->bio) == WRITE && count == entry->bio->bi_size)
@@ -406,7 +396,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 /* Transfer bio data. */
                 bio_for_each_segment(bvec, entry->bio, i) {
                         void *kaddr = kmap(bvec->bv_page);
-                        
+
                         if(copy_to_user(buf+pos, kaddr+bvec->bv_offset,
                                         bvec->bv_len) != 0)
                         {
@@ -447,26 +437,21 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         unsigned long pos = 0;
         int i;
 
-        /* 2. It's a set data-current bio request */
+        /* 2. It's a "set data-current bio" request */
         if (count == sizeof(uintptr_t)) {
-                mutex_lock(&dev->bio_list_lock);
+                mutex_lock(&dev->pending_bio_list_lock);
                 dev->data_current_bio = (struct list_head *)*(uintptr_t *)buf;
-                mutex_unlock(&dev->bio_list_lock);
+                mutex_unlock(&dev->pending_bio_list_lock);
                 return count;
         }
 
-        mutex_lock(&dev->bio_list_lock);
-        if (no_data_bio(dev)) {
-                mutex_unlock(&dev->bio_list_lock);
-                PDEBUG("got write on empty data-current bio, returning -EIO");
-                return -EIO;
-        }
+        mutex_lock(&dev->pending_bio_list_lock);
         entry = list_entry(dev->data_current_bio, struct bdtun_bio_list_entry, list);
-        mutex_unlock(&dev->bio_list_lock);
+        mutex_unlock(&dev->pending_bio_list_lock);
 
         /* 1. It's a completion byte. */
         if (count == 1) {
-                mutex_lock(&dev->bio_list_lock);
+                mutex_lock(&dev->pending_bio_list_lock);
                 if (buf[0]) {
                         PDEBUG("user signaled failure, failing bio.\n");
                         bio_endio(entry->bio, -EIO);
@@ -476,11 +461,8 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                 }
                 bdtun_update_iostat(dev, entry);
                 /* If we're completing the current bio, step ahead. */
-                if (dev->data_current_bio == dev->meta_current_bio) {
-                        dev->meta_current_bio = dev->meta_current_bio->next;
-                }
                 list_del(&entry->list);
-                mutex_unlock(&dev->bio_list_lock);
+                mutex_unlock(&dev->pending_bio_list_lock);
                 kfree(entry);
                 return count;
         }
@@ -506,7 +488,6 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         }
 
         /* 4. It's an error */
-
         PDEBUG("invalid request size from user returning -EIO.\n");
         return -EIO;
 }
@@ -519,12 +500,12 @@ unsigned int bdtunch_poll(struct file *filp, poll_table *wait) {
 
         mask |= POLLOUT | POLLWRNORM; /* writable */
 
-        mutex_lock(&dev->bio_list_lock);
-        if (!list_empty(&dev->bio_list)) {
+        mutex_lock(&dev->incoming_bio_list_lock);
+        if (!list_empty(&dev->incoming_bio_list)) {
                 PDEBUG("list is not empty, setting mask\n");
                 mask |= POLLIN | POLLRDNORM; /* readable */
         }
-        mutex_unlock(&dev->bio_list_lock);
+        mutex_unlock(&dev->incoming_bio_list_lock);
 
         return mask;
 }
@@ -555,18 +536,14 @@ static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
 
         vma->vm_flags |= VM_LOCKED;
 
-        mutex_lock(&dev->bio_list_lock);
-        if (no_data_bio(dev)) {
-                mutex_unlock(&dev->bio_list_lock);
-                PDEBUG("got mmap on empty data-current bio, returning -EIO\n");
-                return -EIO;
-        }
+        mutex_lock(&dev->pending_bio_list_lock);
         entry = list_entry(dev->data_current_bio, struct bdtun_bio_list_entry, list);
-        mutex_unlock(&dev->bio_list_lock);
+        mutex_unlock(&dev->pending_bio_list_lock);
 
         // Check size validity
         if (vma->vm_end - vma->vm_start != entry->bio->bi_vcnt * PAGE_SIZE) {
-                PDEBUG("mmap error: invalid vma size %lu instead of %lu\n", vma->vm_end - vma->vm_start, entry->bio->bi_vcnt * PAGE_SIZE);
+                PDEBUG("mmap error: invalid vma size %lu instead of %lu\n",
+                       vma->vm_end - vma->vm_start, entry->bio->bi_vcnt * PAGE_SIZE);
                 return -EIO;
 		}
 
@@ -632,14 +609,12 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         struct bdtun_add_disk_work *add_disk_work;
 
         /* Check if device exist */
-
-        // TODO: relying on the fact, that only one process can open the control chardev at the same time. But what if,
-        // the process forks itself AFTER? We should use Locks here too
         if (bdtun_find_device(name)) {
                 PDEBUG("Device %s already exsits\n", name);
                 return -EEXIST;
         }
 
+        /* Check block size limits */
         if (block_size < 512 || block_size > PAGE_SIZE) {
                 PDEBUG("Block size must be between 512 and PAGE_SIZE (%lu in this case)\n", PAGE_SIZE);
                 return -EINVAL;
@@ -687,7 +662,8 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         /*
          * Init locks
          */
-        mutex_init(&new->bio_list_lock);
+        mutex_init(&new->incoming_bio_list_lock);
+        mutex_init(&new->pending_bio_list_lock);
         spin_lock_init(&new->ru_lock);
 
         new->ucnt  = 0;
@@ -703,9 +679,9 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         /*
          * Bio list
          */
-        INIT_LIST_HEAD(&new->bio_list);
-        new->meta_current_bio = &new->bio_list;
-        new->data_current_bio = &new->bio_list;
+        INIT_LIST_HEAD(&new->incoming_bio_list);
+        INIT_LIST_HEAD(&new->pending_bio_list);
+        new->data_current_bio = NULL;
 
         /*
          * Get a request queue.
@@ -897,7 +873,7 @@ static void bdtun_remove_dev(struct bdtun *dev)
 static int bdtun_remove_k(const char *name)
 {
         struct bdtun *dev;
-        struct bdtun_bio_list_entry *entry;
+        //struct bdtun_bio_list_entry *entry;
 
         dev = bdtun_find_device(name);
 
@@ -920,14 +896,15 @@ static int bdtun_remove_k(const char *name)
         dev->removing = 1;
         spin_unlock(&dev->ru_lock);
 
-        mutex_lock(&dev->bio_list_lock);
+        // TODO: I don't think this is needed. Check.
+        /*mutex_lock(&dev->bio_list_lock);
         while (!list_empty(&dev->bio_list)) {
                 entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
                 bio_endio(entry->bio, -EIO);
                 list_del(dev->bio_list.next);
                 kfree(entry);
         }
-        mutex_unlock(&dev->bio_list_lock);
+        mutex_unlock(&dev->bio_list_lock);*/
 
         bdtun_remove_dev(dev);
 
