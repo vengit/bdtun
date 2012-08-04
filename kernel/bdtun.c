@@ -340,38 +340,39 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         DEFINE_WAIT(wait);
         int i;
 
-        out_list_is_empty:
-
-        PDEBUG("Preparing to wait\n");
-        prepare_to_wait(&dev->reader_queue, &wait, TASK_INTERRUPTIBLE);
-
-        PDEBUG("grabbing lock on incoming list\n");
-        mutex_lock(&dev->incoming_bio_list_lock);
-
-        if (list_empty(&dev->incoming_bio_list)) {
-                PDEBUG("list empty, releasing lock for out queue\n");
-                mutex_unlock(&dev->incoming_bio_list_lock);
-                PDEBUG("calling schedule\n");
-                schedule();
-                PDEBUG("awaken, finishing wait\n");
-                finish_wait(&dev->reader_queue, &wait);
-
-                PDEBUG("checking for pending signals\n");
-                if (signal_pending(current)) {
-                        PDEBUG("signals are pending, returning -EINTR\n");
-                        return -EINTR;
-                }
-
-                PDEBUG("no pending signals, checking out queue again\n");
-                goto out_list_is_empty;
-        }
-
-        PDEBUG("list containts bio-s, finishing wait\n");
-        finish_wait(&dev->reader_queue, &wait);
-
         /* Read request info */
         if (count == BDTUN_TXREQ_HEADER_SIZE) {
                 PDEBUG("got header request\n");
+
+                out_list_is_empty:
+
+                PDEBUG("Preparing to wait\n");
+                prepare_to_wait(&dev->reader_queue, &wait, TASK_INTERRUPTIBLE);
+
+                PDEBUG("grabbing lock on incoming list\n");
+                mutex_lock(&dev->incoming_bio_list_lock);
+
+                if (list_empty(&dev->incoming_bio_list)) {
+                        PDEBUG("list empty, releasing lock for out queue\n");
+                        mutex_unlock(&dev->incoming_bio_list_lock);
+                        PDEBUG("calling schedule\n");
+                        schedule();
+                        PDEBUG("awaken, finishing wait\n");
+                        finish_wait(&dev->reader_queue, &wait);
+
+                        PDEBUG("checking for pending signals\n");
+                        if (signal_pending(current)) {
+                                PDEBUG("signals are pending, returning -EINTR\n");
+                                return -EINTR;
+                        }
+
+                        PDEBUG("no pending signals, checking out queue again\n");
+                        goto out_list_is_empty;
+                }
+
+                PDEBUG("list containts bio-s, finishing wait\n");
+                finish_wait(&dev->reader_queue, &wait);
+
                 entry = list_entry(
                         dev->incoming_bio_list.next,
                         struct bdtun_bio_list_entry, list
@@ -384,24 +385,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 req->size   = entry->bio->bi_size;
 
                 mutex_lock(&dev->pending_bio_list_lock);
-                int a=0, b=0;
-                struct list_head *pos;
-                list_for_each(pos, &dev->incoming_bio_list) {
-                        a++;
-                }
-                list_for_each(pos, &dev->pending_bio_list) {
-                        b++;
-                }
-                PDEBUG("List sizes before move: incoming: %d, pending: %d", a, b);
                 list_move_tail(&entry->list, &dev->pending_bio_list);
-                a = 0; b = 0;
-                list_for_each(pos, &dev->incoming_bio_list) {
-                        a++;
-                }
-                list_for_each(pos, &dev->pending_bio_list) {
-                        b++;
-                }
-                PDEBUG("List sizes after move: incoming: %d, pending: %d", a, b);
                 mutex_unlock(&dev->pending_bio_list_lock);
 
                 mutex_unlock(&dev->incoming_bio_list_lock);
