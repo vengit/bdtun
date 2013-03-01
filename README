@@ -31,7 +31,8 @@ What's in the package?
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 BDTun comes with a kernel module, a command line tool to set up tunnels,
-a header file and a library file. See INSTALL for details.
+a header file and a library file, and a loopback device as an example.
+See INSTALL for details.
 
 How do I install it?
 ~~~~~~~~~~~~~~~~~~~~

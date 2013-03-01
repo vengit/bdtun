@@ -1,6 +1,6 @@
 #!/bin/bash
 
-./mkbuildenv.sh
+./bootstrap.sh
 ./configure
 make distclean
 tar -czf release.tar.gz --exclude=*.disk --exclude=release.tar.gz \

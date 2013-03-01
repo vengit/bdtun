@@ -1,9 +1,9 @@
 Installing from git
 ~~~~~~~~~~~~~~~~~~~
 
-From revision f9e496211775798301a15b52ddad29af91abb143 a script
+A script
 
-./mkbuildenv
+./bootstrap.sh
 
 is available. (Re)running this script copies/generates the necessary
 files, so you can continue with the "Installing from tarball" section.
