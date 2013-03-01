@@ -40,7 +40,7 @@ sudo make install
 To install with debugging enabled, use the with-debug option with
 configure:
 
-./configure --with-debug
+./configure --enable-debug
 
 The install script installs the following items:
 
