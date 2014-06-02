@@ -126,9 +126,13 @@ static void bdtun_do_add_disk(struct work_struct *work)
 {
         struct bdtun_add_disk_work *w = container_of(work, struct bdtun_add_disk_work, work);
 
+        PDEBUG("bdtun_do_add_disk: called\n");
+
         add_disk(w->dev->bd_gd);
         atomic_set(&w->dev->add_disk_finished, 1);
         kfree(w);
+
+        PDEBUG("bdtun_do_add_disk: finished\n");
 }
 
 /*
@@ -149,12 +153,12 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
         const int rw = bio_data_dir(bio);
         int cpu;
 
+        PDEBUG("bdtun_make_request: called\n");
+
         new = kmalloc(sizeof(struct bdtun_bio_list_entry), GFP_KERNEL);
 
-        PDEBUG("make_request called\n");
-
         if (!new) {
-                PDEBUG("Could not allocate bio list entry\n");
+                PDEBUG("bdtun_make_request: could not allocate bio list entry\n");
                 bio_endio(bio, -EIO);
                 return MKREQ_RETVAL;
         }
@@ -167,13 +171,14 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
         mutex_unlock(&dev->incoming_bio_list_lock);
 
         wake_up(&dev->reader_queue);
-        PDEBUG("request queued\n");
+        PDEBUG("bdtun_make_request: request queued\n");
 
         cpu = part_stat_lock();
         part_stat_inc(cpu, &dev->bd_gd->part0, ios[rw]);
         part_stat_add(cpu, &dev->bd_gd->part0, sectors[rw], bio_sectors(bio));
         part_inc_in_flight(&dev->bd_gd->part0, rw);
         part_stat_unlock();
+        PDEBUG("bdtun_make_request: written disk stats (finished)\n");
 
         return MKREQ_RETVAL;
 }
@@ -181,7 +186,8 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
 static int bdtun_open(struct block_device *bdev, fmode_t mode)
 {
         struct bdtun *dev = (struct bdtun *)(bdev->bd_disk->queue->queuedata);
-        PDEBUG("bdtun_open()\n");
+
+        PDEBUG("bdtun_open: called\n");
 
         spin_lock(&dev->ru_lock);
         if (dev->removing) {
@@ -192,27 +198,30 @@ static int bdtun_open(struct block_device *bdev, fmode_t mode)
         dev->ucnt++;
         spin_unlock(&dev->ru_lock);
 
+        PDEBUG("bdtun_open: finished\n");
         return 0;
 }
 
-static int bdtun_release(struct gendisk *gd, fmode_t mode)
+static void bdtun_release(struct gendisk *gd, fmode_t mode)
 {
         struct bdtun *dev = (struct bdtun *)(gd->queue->queuedata);
 
-        PDEBUG("bdtun_release()\n");
+        PDEBUG("bdtun_release: called\n");
 
         spin_lock(&dev->ru_lock);
         dev->ucnt--;
         spin_unlock(&dev->ru_lock);
 
-        return 0;
+        PDEBUG("bdtun_release: finished\n");
 }
 
 static int bdtun_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 {
         long size;
         struct bdtun *dev = bdev->bd_disk->private_data;
-        
+
+        PDEBUG("bdtun_getgeo: called\n");
+
         /* We are a virtual device, so we have to make up something.
          * We claim to have 16 sectors, 4 head, and the appropriate
          * number of cylinders
@@ -222,6 +231,9 @@ static int bdtun_getgeo(struct block_device *bdev, struct hd_geometry *geo)
          geo->heads = 4;
          geo->sectors = 16;
          geo->start = 0;
+
+         PDEBUG("bdtun_getgeo: finished\n");
+
          return 0;
 }
 
@@ -242,12 +254,12 @@ static int bdtunch_open(struct inode *inode, struct file *filp)
 {
         struct bdtun *dev = container_of(inode->i_cdev, struct bdtun, ch_dev);
 
-        PDEBUG("got device_open on char dev\n");
+        PDEBUG("bdtunch_open: got device_open on char dev\n");
 
         spin_lock(&dev->ru_lock);
         if (dev->removing) {
                 spin_unlock(&dev->ru_lock);
-                PDEBUG("device is removing\n");
+                PDEBUG("bdtunch_open: device is removing\n");
                 return -EBUSY;
         }
         dev->ucnt++;
@@ -255,6 +267,7 @@ static int bdtunch_open(struct inode *inode, struct file *filp)
 
         filp->private_data = (void *)dev;
 
+        PDEBUG("bdtunch_open: finished\n");
         return 0;
 }
 
@@ -265,7 +278,7 @@ static int bdtunch_release(struct inode *inode, struct file *filp)
 {
         struct bdtun *dev = container_of(inode->i_cdev, struct bdtun, ch_dev);
 
-        PDEBUG("got device_release on char dev\n");
+        PDEBUG("bdtunch_release: got device_release on char dev\n");
 
         mutex_lock(&dev->incoming_bio_list_lock);
         mutex_lock(&dev->pending_bio_list_lock);
@@ -276,6 +289,8 @@ static int bdtunch_release(struct inode *inode, struct file *filp)
         spin_lock(&dev->ru_lock);
         dev->ucnt--;
         spin_unlock(&dev->ru_lock);
+
+        PDEBUG("bdtunch_release: got device_release on char dev\n");
 
         return 0;
 }
@@ -340,37 +355,39 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         DEFINE_WAIT(wait);
         int i;
 
+        PDEBUG("bdtunch_read: called\n");
+
         /* Read request info */
         if (count == BDTUN_TXREQ_HEADER_SIZE) {
-                PDEBUG("got header request\n");
+                PDEBUG("bdtunch_read: got header request\n");
 
                 out_list_is_empty:
 
-                PDEBUG("Preparing to wait\n");
+                PDEBUG("bdtunch_read: Preparing to wait\n");
                 prepare_to_wait(&dev->reader_queue, &wait, TASK_INTERRUPTIBLE);
 
-                PDEBUG("grabbing lock on incoming list\n");
+                PDEBUG("bdtunch_read: grabbing lock on incoming list\n");
                 mutex_lock(&dev->incoming_bio_list_lock);
 
                 if (list_empty(&dev->incoming_bio_list)) {
-                        PDEBUG("list empty, releasing lock for out queue\n");
+                        PDEBUG("bdtunch_read: list empty, releasing lock for out queue\n");
                         mutex_unlock(&dev->incoming_bio_list_lock);
-                        PDEBUG("calling schedule\n");
+                        PDEBUG("bdtunch_read: calling schedule\n");
                         schedule();
-                        PDEBUG("awaken, finishing wait\n");
+                        PDEBUG("bdtunch_read: awaken, finishing wait\n");
                         finish_wait(&dev->reader_queue, &wait);
 
-                        PDEBUG("checking for pending signals\n");
+                        PDEBUG("bdtunch_read: checking for pending signals\n");
                         if (signal_pending(current)) {
-                                PDEBUG("signals are pending, returning -EINTR\n");
+                                PDEBUG("bdtunch_read: signals are pending, returning -EINTR (finished)\n");
                                 return -EINTR;
                         }
 
-                        PDEBUG("no pending signals, checking out queue again\n");
+                        PDEBUG("bdtunch_read: no pending signals, checking out queue again\n");
                         goto out_list_is_empty;
                 }
 
-                PDEBUG("list containts bio-s, finishing wait\n");
+                PDEBUG("bdtunch_read: list containts bio-s, finishing wait\n");
                 finish_wait(&dev->reader_queue, &wait);
 
                 entry = list_entry(
@@ -390,12 +407,12 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
 
                 mutex_unlock(&dev->incoming_bio_list_lock);
 
-                PDEBUG("header request served\n");
+                PDEBUG("bdtunch_read: header request served (finished)\n");
                 return count;
         }
         mutex_unlock(&dev->incoming_bio_list_lock);
 
-        PDEBUG("got non-header request, getting current bio\n");
+        PDEBUG("bdtunch_read: got non-header request, getting current bio\n");
         mutex_lock(&dev->pending_bio_list_lock);
         entry = list_entry(
                 dev->data_current_bio,
@@ -406,7 +423,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         /* Read payload */
         if (bio_data_dir(entry->bio) == WRITE && count == entry->bio->bi_size)
         {
-                PDEBUG("got write request, trasferring data\n");
+                PDEBUG("bdtunch_read: got write request, trasferring data\n");
                 /* Transfer bio data. */
                 bio_for_each_segment(bvec, entry->bio, i) {
                         void *kaddr = kmap(bvec->bv_page);
@@ -414,22 +431,23 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                         if(copy_to_user(buf+pos, kaddr+bvec->bv_offset,
                                         bvec->bv_len) != 0)
                         {
-                                PDEBUG("error copying data to user\n");
                                 kunmap(bvec->bv_page);
+                                PDEBUG("bdtunch_read: error copying data to user (finished)\n");
                                 return -EIO;
                         }
                         if (bvec->bv_offset || bvec->bv_len != PAGE_SIZE) {
-                            PDEBUG("WARNING!!! Misaligned data: offset: %d, size: %d\n", bvec->bv_offset, bvec->bv_len);
+                            PDEBUG("bdtunch_read: WARNING!!! Misaligned data: offset: %d, size: %d\n", bvec->bv_offset, bvec->bv_len);
                         }
                         kunmap(bvec->bv_page);
                         pos += bvec->bv_len;
                 }
-                PDEBUG("transfer completed\n");
+                PDEBUG("bdtunch_read: transfer completed (finished)\n");
                 return count;
         }
 
         /* Error */
-        PDEBUG("request size is invalid, returning -EIO\n");
+        PDEBUG("bdtunch_read: request size is invalid, returning -EIO (finished)\n");
+
         return -EIO;
 }
 
@@ -438,10 +456,15 @@ void bdtun_update_iostat(struct bdtun *dev, struct bdtun_bio_list_entry *entry)
         int rw = bio_data_dir(entry->bio);
         unsigned long duration = jiffies - entry->start_time;
         int cpu = part_stat_lock();
+
+        PDEBUG("bdtun_update_iostat: called\n");
+
         part_stat_add(cpu, &dev->bd_gd->part0, ticks[rw], duration);
         part_round_stats(cpu, &dev->bd_gd->part0);
         part_dec_in_flight(&dev->bd_gd->part0, rw);
         part_stat_unlock();
+
+        PDEBUG("bdtun_update_iostat: finished\n");
 }
 
 static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, loff_t *offset)
@@ -452,13 +475,15 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         unsigned long pos = 0;
         int i;
 
+        PDEBUG("bdtunch_write: called\n");
+
         /* 2. It's a "set data-current bio" request */
         if (count == sizeof(uintptr_t)) {
-                PDEBUG("setting current bio\n");
+                PDEBUG("bdtunch_write: setting current bio\n");
                 mutex_lock(&dev->pending_bio_list_lock);
                 dev->data_current_bio = (struct list_head *)*(uintptr_t *)buf;
                 mutex_unlock(&dev->pending_bio_list_lock);
-                PDEBUG("current bio set successfully\n");
+                PDEBUG("bdtunch_write: current bio set successfully (finished)\n");
                 return count;
         }
 
@@ -470,10 +495,10 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         if (count == 1) {
                 mutex_lock(&dev->pending_bio_list_lock);
                 if (buf[0]) {
-                        PDEBUG("user signaled failure, failing bio.\n");
+                        PDEBUG("bdtunch_write: user signaled failure, failing bio.\n");
                         bio_endio(entry->bio, -EIO);
                 } else {
-                        PDEBUG("user signaled completion, completing bio.\n");
+                        PDEBUG("bdtunch_write: user signaled completion, completing bio.\n");
                         bio_endio(entry->bio, 0);
                 }
                 bdtun_update_iostat(dev, entry);
@@ -481,19 +506,21 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                 list_del(&entry->list);
                 mutex_unlock(&dev->pending_bio_list_lock);
                 kfree(entry);
+
+                PDEBUG("bdtunch_write: finished\n");
                 return count;
         }
 
         /* 3. It's data */
         if (bio_data_dir(entry->bio) == READ &&
             count == entry->bio->bi_size) {
-                PDEBUG("got data read request\n");
+                PDEBUG("bdtunch_write: got data read request\n");
                 bio_for_each_segment(bvec, entry->bio, i) {
                         void *kaddr = kmap(bvec->bv_page);
                         if(copy_from_user(kaddr+bvec->bv_offset,
                                           buf+pos, bvec->bv_len) != 0)
                         {
-                                PDEBUG("error copying data from user\n");
+                                PDEBUG("bdtunch_write: error copying data from user (finished)\n");
                                 kunmap(bvec->bv_page);
                                 /* We do not complete the bio here,
                                  * so the user process can try again */
@@ -506,7 +533,8 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         }
 
         /* 4. It's an error */
-        PDEBUG("invalid request size from user returning -EIO.\n");
+        PDEBUG("bdtunch_write: invalid request size from user returning -EIO. (finished)\n");
+
         return -EIO;
 }
 
@@ -514,16 +542,20 @@ unsigned int bdtunch_poll(struct file *filp, poll_table *wait) {
         struct bdtun *dev = filp->private_data;
         unsigned int mask = 0;
 
+        PDEBUG("bdtunch_poll: called\n");
+
         poll_wait(filp, &dev->reader_queue, wait);
 
         mask |= POLLOUT | POLLWRNORM; /* writable */
 
         mutex_lock(&dev->incoming_bio_list_lock);
         if (!list_empty(&dev->incoming_bio_list)) {
-                PDEBUG("list is not empty, setting mask\n");
+                PDEBUG("bdtunch_poll: list is not empty, setting mask\n");
                 mask |= POLLIN | POLLRDNORM; /* readable */
         }
         mutex_unlock(&dev->incoming_bio_list_lock);
+
+        PDEBUG("bdtunch_poll: called\n");
 
         return mask;
 }
@@ -541,14 +573,16 @@ static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
         int pos = 0;
         int i;
 
+        PDEBUG("bdtunch_mmap: Offset isn't aligned: %ld\n", offset);
+
         if (offset & ~PAGE_MASK) {
-                PDEBUG("Offset isn't aligned: %ld\n", offset);
+                PDEBUG("bdtunch_mmap: Offset isn't aligned: %ld (finished)\n", offset);
                 return -ENXIO;
         }
 
         if (!(vma->vm_flags & VM_SHARED))
         {
-                PDEBUG("Mappings must be shared.\n");
+                PDEBUG("bdtunch_mmap: Mappings must be shared. (finished)\n");
                 return -EINVAL;
         }
 
@@ -560,7 +594,7 @@ static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
 
         // Check size validity
         if (vma->vm_end - vma->vm_start != entry->bio->bi_vcnt * PAGE_SIZE) {
-                PDEBUG("mmap error: invalid vma size %lu instead of %lu\n",
+                PDEBUG("bdtunch_mmap: error: invalid vma size %lu instead of %lu (finished)\n",
                        vma->vm_end - vma->vm_start, entry->bio->bi_vcnt * PAGE_SIZE);
                 return -EIO;
 		}
@@ -571,7 +605,7 @@ static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
                         page_to_pfn(bvec->bv_page),
                         PAGE_SIZE, PAGE_SHARED) < 0)
                 {
-                        PDEBUG("remap_pfn_range failed\n");
+                        PDEBUG("bdtunch_mmap: remap_pfn_range failed (finished)\n");
                         return -EIO;
                 }
                 pos += 1;
@@ -579,6 +613,7 @@ static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
 
         vma->vm_private_data = (void *)dev;
 
+        PDEBUG("bdtunch_mmap: finished\n");
         return 0;
 }
 
@@ -626,34 +661,36 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         char qname[BDEVNAME_SIZE + 3];
         struct bdtun_add_disk_work *add_disk_work;
 
+        PDEBUG("bdtun_create_k: called\n");
+
         /* Check if device exist */
         if (bdtun_find_device(name)) {
-                PDEBUG("Device %s already exsits\n", name);
+                PDEBUG("bdtun_create_k: device %s already exsits (finished)\n", name);
                 return -EEXIST;
         }
 
         /* Check block size limits */
         if (block_size < 512 || block_size > PAGE_SIZE) {
-                PDEBUG("Block size must be between 512 and PAGE_SIZE (%lu in this case)\n", PAGE_SIZE);
+                PDEBUG("bdtun_create_k: block size must be between 512 and PAGE_SIZE (%lu in this case) (finished)\n", PAGE_SIZE);
                 return -EINVAL;
         }
 
         /* Check if block_size is a power of two */
         if (block_size & (block_size - 1)) {
-                PDEBUG("Block size must be a power of two\n");
+                PDEBUG("bdtun_create_k: block size must be a power of two (finished)\n");
                 return -EINVAL;
         }
 
         /* Check if size is a multiple of block_size */
         if (size % block_size) {
-                PDEBUG("Size must be a multiple of the block size");
+                PDEBUG("bdtun_create_k: size must be a multiple of the block size (finished)");
                 return -EINVAL;
         }
 
         /*
          * Set up character device and workqueue name
          */
-        PDEBUG("setting up names\n");
+        PDEBUG("bdtun_create_k: setting up names\n");
         strncpy(charname, name, BDEVNAME_SIZE);
         strcat(charname, "_tun");
         strncpy(qname, name, BDEVNAME_SIZE);
@@ -662,10 +699,10 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         /*
          * Allocate device structure
          */
-        PDEBUG("allocating device sructure\n");
+        PDEBUG("bdtun_create_k: allocating device sructure\n");
         new = kmalloc(sizeof (struct bdtun), GFP_KERNEL);
         if (new == NULL) {
-                PDEBUG("Could not allocate memory for device structure\n");
+                PDEBUG("bdtun_create_k: could not allocate memory for device structure\n");
                 error = -ENOMEM;
                 goto out;
         }
@@ -704,16 +741,16 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         /*
          * Get a request queue.
          */
-        PDEBUG("allocating queue\n");
+        PDEBUG("bdtun_create_k: allocating queue\n");
         queue = blk_alloc_queue(GFP_KERNEL);
 
         if (queue == NULL) {
-                PDEBUG("Could not allocate request queue\n");
+                PDEBUG("bdtun_create_k: could not allocate request queue\n");
                 error = -ENOMEM;
                 goto out_kfree;
         }
         
-        PDEBUG("setting up queue parameters\n");
+        PDEBUG("bdtun_create_k: setting up queue parameters\n");
 
         new->capabilities = capabilities;
         queue->queuedata = new;
@@ -743,10 +780,10 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         /*
          * Get registered.
          */
-        PDEBUG("registering block device\n");
+        PDEBUG("bdtun_create_k: registering block device\n");
         bd_major = register_blkdev(0, "bdtun");
         if (bd_major < 0) {
-                PDEBUG("unable to get major number\n");
+                PDEBUG("bdtun_create_k: unable to get major number\n");
                 error = bd_major;
                 goto out_cleanup_queue;
         }
@@ -754,10 +791,10 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         /*
          * Initialize character device
          */
-        PDEBUG("setting up char device\n");
+        PDEBUG("bdtun_create_k: setting up char device\n");
         error = alloc_chrdev_region(&new->ch_num, 0, 1, charname);
         if (error) {
-                PDEBUG("could not allocate character device number\n");
+                PDEBUG("bdtun_create_k: could not allocate character device number\n");
                 goto out_unregister_blkdev;
         }
         
@@ -767,10 +804,10 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         cdev_init(&new->ch_dev, &bdtunch_ops);
         new->ch_dev.owner = THIS_MODULE;
         
-        PDEBUG("char major %d\n", MAJOR(new->ch_num));
+        PDEBUG("bdtun_create_k: char major %d\n", MAJOR(new->ch_num));
         error = cdev_add(&new->ch_dev, new->ch_num ,1);
         if (error) {
-                PDEBUG("error setting up char device\n");
+                PDEBUG("bdtun_create_k: error setting up char device\n");
                 goto out_unregister_chrdev_region;
         }
         
@@ -780,7 +817,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         
         new->ch_device = device_create(chclass, NULL, new->ch_num, NULL, charname);
         if (IS_ERR(new->ch_device)) {
-                PDEBUG("error setting up device object\n");
+                PDEBUG("bdtun_create_k: error setting up device object\n");
                 error = -ENOMEM;
                 goto out_cdev_del;
         }
@@ -788,11 +825,11 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         /*
          * Set up the gendisk structure.
          */
-        PDEBUG("allocating the gendisk structure\n");
+        PDEBUG("bdtun_create_k: allocating the gendisk structure\n");
         // TODO: factor out BDTUN_BD_MINORS as a module parameter
         new->bd_gd = alloc_disk(BDTUN_BD_MINORS);
         if (!new->bd_gd) {
-                PDEBUG("Unable to alloc_disk()\n");
+                PDEBUG("bdtun_create_k: unable to alloc_disk()\n");
                 error = -ENOMEM;
                 goto out_cdev_del;
         }
@@ -819,10 +856,11 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         add_disk_work->dev = new;
         queue_work(add_disk_q, &add_disk_work->work);
 
-        PDEBUG("finished setting up device %s\n", name);
+        PDEBUG("bdtun_create_k: finished setting up device %s\n", name);
 
         try_module_get(THIS_MODULE);
 
+        PDEBUG("bdtun_create_k: finished\n");
         return 0;
 
         out_cdev_del:
@@ -836,6 +874,7 @@ static int bdtun_create_k(const char *name, uint64_t block_size, uint64_t size, 
         out_kfree:
                 kfree(new);
         out:
+                PDEBUG("bdtun_create_k: finished\n");
                 return error;
 }
 
@@ -844,12 +883,12 @@ static int bdtun_resize_k(const char *name, uint64_t size)
         struct bdtun *dev;
         int ret;
 
-        PDEBUG("Resizing device %s\n", name);
+        PDEBUG("bdtun_resize_k: called, resizing device %s\n", name);
 
         dev = bdtun_find_device(name);
 
         if (dev == NULL) {
-                PDEBUG("error removing '%s': no such device\n", name);
+                PDEBUG("bdtun_resize_k: error removing '%s': no such device (finished)\n", name);
                 return -ENOENT;
         }
 
@@ -857,28 +896,29 @@ static int bdtun_resize_k(const char *name, uint64_t size)
         ret = revalidate_disk(dev->bd_gd);
 
         if (ret) {
-                PDEBUG("could not revalidate_disk after capacity change\n");
+                PDEBUG("bdtun_resize_k: could not revalidate_disk after capacity change (finished)\n");
                 return ret;
         }
 
         dev->bd_size = size;
 
+        PDEBUG("bdtun_resize_k: finished");
         return 0;
 }
 
 static void bdtun_remove_dev(struct bdtun *dev)
 {
         /* Destroy character devices */
-        PDEBUG("removing char device\n");
+        PDEBUG("bdtun_remove_dev: called, removing char device\n");
         unregister_chrdev_region(dev->ch_num, 1);
         cdev_del(&dev->ch_dev);
-        PDEBUG("device shutdown finished\n");
+        PDEBUG("bdtun_remove_dev: device shutdown finished\n");
         
         /* Unreg device object and class if needed */
         device_destroy(chclass, dev->ch_num);
 
         /* Destroy block devices */
-        PDEBUG("removing block device\n");
+        PDEBUG("bdtun_remove_dev: removing block device\n");
         dev->bd_gd->queue->queuedata = NULL;
         unregister_blkdev(dev->bd_gd->major, "bdtun");
         blk_cleanup_queue(dev->bd_gd->queue);
@@ -886,6 +926,8 @@ static void bdtun_remove_dev(struct bdtun *dev)
         put_disk(dev->bd_gd);
         
         module_put(THIS_MODULE);
+
+        PDEBUG("bdtun_remove_dev: finished\n");
 }
 
 static int bdtun_remove_k(const char *name)
@@ -895,20 +937,22 @@ static int bdtun_remove_k(const char *name)
 
         dev = bdtun_find_device(name);
 
+        PDEBUG("bdtun_remove_k: called\n");
+
         if (dev == NULL) {
-                PDEBUG("error removing '%s': no such device\n", name);
+                PDEBUG("bdtun_remove_k: error removing '%s': no such device (finished)\n", name);
                 return -ENOENT;
         }
 
         spin_lock(&dev->ru_lock);
         if (dev->removing) {
                 spin_unlock(&dev->ru_lock);
-                PDEBUG("won't remove: block device is already being removed\n");
+                PDEBUG("bdtun_remove_k: won't remove: block device is already being removed (finished)\n");
                 return -EBUSY;
         }
         if (dev->ucnt) {
                 spin_unlock(&dev->ru_lock);
-                PDEBUG("won't remove: block device is in use");
+                PDEBUG("bdtun_remove_k: won't remove: block device is in use (finished)");
                 return -EBUSY;
         }
         dev->removing = 1;
@@ -931,7 +975,7 @@ static int bdtun_remove_k(const char *name)
 
         kfree(dev);
 
-        PDEBUG("device removed from list\n");
+        PDEBUG("bdtun_remove_k: device removed from list (finished)\n");
 
         return 0;
 }
@@ -940,10 +984,12 @@ static int bdtun_info_k(char *name, struct bdtun_info *device_info)
 {
         struct bdtun *dev;
         
+        PDEBUG("bdtun_info_k: called\n");
+
         dev = bdtun_find_device(name);
         
         if (dev == NULL) {
-                PDEBUG("There is no such device\n");
+                PDEBUG("bdtun_info_k: there is no such device (finished)\n");
                 return -ENOENT;
         }
         
@@ -955,6 +1001,8 @@ static int bdtun_info_k(char *name, struct bdtun_info *device_info)
         device_info->ch_minor      = MINOR(dev->ch_num);
         device_info->capabilities  = dev->capabilities;
         
+        PDEBUG("bdtun_info_k: finished\n");
+
         return 0;
 }
 
@@ -965,6 +1013,8 @@ static int bdtun_list_k(
         struct list_head *ptr;
         struct bdtun *entry;
         int i, bufpos, len;
+
+        PDEBUG("bdtun_list_k: called\n");
 
         i = 0;
         bufpos = 0;
@@ -985,8 +1035,9 @@ static int bdtun_list_k(
                 bufpos += len;
                 i++;
         }
-        
-        
+
+        PDEBUG("bdtun_list_k: finished\n");
+
         return bufpos;
 }
 
@@ -995,22 +1046,26 @@ static int bdtun_list_k(
  */
 static int ctrl_open(struct inode *inode, struct file *filp)
 {
-        PDEBUG("got device_open on master dev\n");
+        PDEBUG("ctrl_open: got device_open on master dev\n");
 
         if (!atomic_dec_and_test(&ctrl_lock)) {
                 atomic_inc(&ctrl_lock);
-                PDEBUG("control device is busy\n");
+                PDEBUG("ctrl_open: control device is busy (finished)\n");
                 return -EBUSY;
         }
+
+        PDEBUG("ctrl_open: finished\n");
 
         return 0;
 }
 
 static int ctrl_release(struct inode *inode, struct file *filp)
 {
-        PDEBUG("got device_release on master dev\n");
+        PDEBUG("ctrl_release: called, got device_release on master dev\n");
 
         atomic_inc(&ctrl_lock);
+
+        PDEBUG("ctrl_release: finished\n");
 
         return 0;
 }
@@ -1024,19 +1079,23 @@ static int ctrl_response_size = 0;
 static ssize_t ctrl_read(struct file *filp, char *buf, size_t count, loff_t *f_pos)
 {
         int tmp = ctrl_response_size;
-        
+
+        PDEBUG("ctrl_read: called");
+
         if (ctrl_response_size < 0) {
-                PDEBUG("control response size is invalid: %d\n", ctrl_response_size);
+                PDEBUG("ctrl_read: control response size is invalid: %d (finished)\n", ctrl_response_size);
                 return -EIO;
         }
         
         if(copy_to_user(buf, ctrl_response_buf, ctrl_response_size) != 0) {
-                PDEBUG("error copying data to user in ctrl_read\n");
+                PDEBUG("error copying data to user in ctrl_read (finished)\n");
                 return -EFAULT;
         }
         
         ctrl_response_size = 0;
         
+        PDEBUG("ctrl_read: finished");
+
         return tmp;
 }
 
@@ -1045,32 +1104,35 @@ static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff
         struct bdtun_ctrl_command *c;
         struct bdtun_info info;
         int ret;
-        
+
+        PDEBUG("ctrl_read: called");
+
         if (count < 1) {
-                PDEBUG("received count < 1\n");
+                PDEBUG("ctrl_read: received count < 1 (finished)\n");
                 return -EIO;
         }
         
         c = (struct bdtun_ctrl_command *) buf;
         
-        PDEBUG("received command: %d\n", c->command);
+        PDEBUG("ctrl_read: received command: %d\n", c->command);
         
         switch (c->command) {
         case BDTUN_COMM_CREATE:
                 if (count < BDTUN_COMM_CREATE_SIZE) {
-                        PDEBUG("Invalid commad packet size\n");
+                        PDEBUG("ctrl_read: invalid commad packet size (finished)\n");
                         return -EIO;
                 }
                 ret = bdtun_create_k(c->create.name, c->create.blocksize, c->create.size, c->create.capabilities);
                 
                 if (ret < 0) {
+                        PDEBUG("ctrl_read: could not create device (finished)\n");
                         return ret;
                 }
                 
                 break;
         case BDTUN_COMM_REMOVE:
                 if (count < BDTUN_COMM_REMOVE_SIZE) {
-                        PDEBUG("Invalid commad packet size\n");
+                        PDEBUG("ctrl_read: Invalid commad packet size (finished)\n");
                         return -EIO;
                 }
                 
@@ -1083,13 +1145,14 @@ static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff
                 break;
         case BDTUN_COMM_INFO:
                 if (count < BDTUN_COMM_INFO_SIZE) {
-                        PDEBUG("Invalid commad packet size\n");
+                        PDEBUG("ctrl_read: invalid commad packet size (finished)\n");
                         return -EIO;
                 }
                 
                 ret = bdtun_info_k(c->info.name, &info);
                 
                 if (ret != 0) {
+                        PDEBUG("ctrl_read: could not get info (finished)\n");
                         return ret;
                 }
                 
@@ -1098,7 +1161,7 @@ static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff
                 break;
         case BDTUN_COMM_LIST:
                 if (count < BDTUN_COMM_LIST_SIZE) {
-                        PDEBUG("Invalid commad packet size\n");
+                        PDEBUG("ctrl_read: invalid commad packet size (finished)\n");
                         return -EIO;
                 }
                 
@@ -1110,7 +1173,7 @@ static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff
                 break;
         case BDTUN_COMM_RESIZE:
                 if (count < BDTUN_COMM_RESIZE_SIZE) {
-                        PDEBUG("Invalid commad packet size\n");
+                        PDEBUG("ctrl_read: invalid commad packet size (finished)\n");
                         return -EIO;
                 }
                 
@@ -1122,10 +1185,12 @@ static ssize_t ctrl_write(struct file *filp, const char *buf, size_t count, loff
                 
                 break;
         default:
-                PDEBUG("Invalid commad\n");
+                PDEBUG("ctrl_read: invalid commad (finished)\n");
                 return -EIO;
         }
-        
+
+        PDEBUG("ctrl_read: finished\n");
+
         return count;
 }
 
@@ -1146,6 +1211,8 @@ static int __init bdtun_init(void)
 {
         int error;
 
+        PDEBUG("__init: called\n");
+
         /*
          * Set up a work queue for adding disks
          */
@@ -1160,7 +1227,7 @@ static int __init bdtun_init(void)
          */
         chclass = class_create(THIS_MODULE, "bdtun");
         if (IS_ERR(chclass)) {
-                PDEBUG("error setting up device class\n");
+                PDEBUG("__init: error setting up device class\n");
                 error = -ENOMEM;
                 goto out_adq;
         }
@@ -1168,7 +1235,7 @@ static int __init bdtun_init(void)
         /*
          * Initialize master character device
          */
-        PDEBUG("setting up char device\n");
+        PDEBUG("__init: setting up char device\n");
 
         error = alloc_chrdev_region(&ctrl_devnum, 0, 1, "bdtun");
         if (error) {
@@ -1179,7 +1246,7 @@ static int __init bdtun_init(void)
         ctrl_dev.owner = THIS_MODULE;
         error = cdev_add(&ctrl_dev, ctrl_devnum ,1);
         if (error) {
-                PDEBUG("error setting up control device\n");
+                PDEBUG("__init: error setting up control device\n");
                 goto out_unregister_chrdev_region;
         }
         
@@ -1189,11 +1256,12 @@ static int __init bdtun_init(void)
         
         ctrl_device = device_create(chclass, NULL, ctrl_devnum, NULL, "bdtun");
         if (IS_ERR(ctrl_device)) {
-                PDEBUG("error setting up control device object\n");
+                PDEBUG("__init: error setting up control device object\n");
                 error = -ENOMEM;
                 goto out_cdev_del;
         }
 
+        PDEBUG("__init: finished\n");
         return 0;
 
         out_cdev_del:
@@ -1205,7 +1273,7 @@ static int __init bdtun_init(void)
         out_adq:
                 destroy_workqueue(add_disk_q);
         out_err:
-                PDEBUG("Error during module initialization\n");
+                PDEBUG("__init: Error during module initialization (finished)\n");
                 return -ENOMEM;
 }
 
@@ -1216,6 +1284,8 @@ static void __exit bdtun_exit(void)
 {
         struct list_head *ptr;
 
+        PDEBUG("__exit: called\n");
+
         list_for_each(ptr, &device_list)
                 bdtun_remove_dev(list_entry(ptr, struct bdtun, list));
 
@@ -1225,6 +1295,8 @@ static void __exit bdtun_exit(void)
         cdev_del(&ctrl_dev);
         unregister_chrdev_region(ctrl_devnum, 1);
         class_destroy(chclass);
+
+        PDEBUG("__exit: finished\n");
 }
 
 module_init(bdtun_init);
