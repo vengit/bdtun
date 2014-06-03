@@ -290,7 +290,7 @@ static int bdtunch_release(struct inode *inode, struct file *filp)
         dev->ucnt--;
         spin_unlock(&dev->ru_lock);
 
-        PDEBUG("bdtunch_release: got device_release on char dev\n");
+        PDEBUG("bdtunch_release: finished\n");
 
         return 0;
 }
@@ -410,7 +410,8 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 PDEBUG("bdtunch_read: header request served (finished)\n");
                 return count;
         }
-        mutex_unlock(&dev->incoming_bio_list_lock);
+        // TODO: BUG?
+        //mutex_unlock(&dev->incoming_bio_list_lock);
 
         PDEBUG("bdtunch_read: got non-header request, getting current bio\n");
         mutex_lock(&dev->pending_bio_list_lock);
