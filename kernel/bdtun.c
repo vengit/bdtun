@@ -159,7 +159,7 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
 
         if (!new) {
                 PDEBUG("bdtun_make_request: could not allocate bio list entry\n");
-                bio_endio(bio, -EIO);
+                bio_endio(bio); // TODO: -EIO
                 return MKREQ_RETVAL;
         }
 
@@ -351,9 +351,9 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         struct bdtun_bio_list_entry *entry;
         struct bdtun_txreq *req;
         unsigned long pos = 0;
-        struct bio_vec *bvec;
+        struct bio_vec bvec;
         DEFINE_WAIT(wait);
-        int i;
+        struct bvec_iter i;
 
         PDEBUG("bdtunch_read: called\n");
 
@@ -398,8 +398,8 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 req = (struct bdtun_txreq *)buf;
                 req->id     = (uintptr_t)entry;
                 req->flags  = bdtun_translate_bio_rw(entry->bio->bi_rw);
-                req->offset = entry->bio->bi_sector * KERNEL_SECTOR_SIZE;
-                req->size   = entry->bio->bi_size;
+                req->offset = entry->bio->bi_iter.bi_sector * KERNEL_SECTOR_SIZE;
+                req->size   = bio_sectors(entry->bio);
 
                 mutex_lock(&dev->pending_bio_list_lock);
                 list_move_tail(&entry->list, &dev->pending_bio_list);
@@ -422,25 +422,25 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
         mutex_unlock(&dev->pending_bio_list_lock);
 
         /* Read payload */
-        if (bio_data_dir(entry->bio) == WRITE && count == entry->bio->bi_size)
+        if (bio_data_dir(entry->bio) == WRITE && count == bio_sectors(entry->bio))
         {
                 PDEBUG("bdtunch_read: got write request, trasferring data\n");
                 /* Transfer bio data. */
                 bio_for_each_segment(bvec, entry->bio, i) {
-                        void *kaddr = kmap(bvec->bv_page);
+                        void *kaddr = kmap(bvec.bv_page);
 
-                        if(copy_to_user(buf+pos, kaddr+bvec->bv_offset,
-                                        bvec->bv_len) != 0)
+                        if(copy_to_user(buf+pos, kaddr+bvec.bv_offset,
+                                        bvec.bv_len) != 0)
                         {
-                                kunmap(bvec->bv_page);
+                                kunmap(bvec.bv_page);
                                 PDEBUG("bdtunch_read: error copying data to user (finished)\n");
                                 return -EIO;
                         }
-                        if (bvec->bv_offset || bvec->bv_len != PAGE_SIZE) {
-                            PDEBUG("bdtunch_read: WARNING!!! Misaligned data: offset: %d, size: %d\n", bvec->bv_offset, bvec->bv_len);
+                        if (bvec.bv_offset || bvec.bv_len != PAGE_SIZE) {
+                            PDEBUG("bdtunch_read: WARNING!!! Misaligned data: offset: %d, size: %d\n", bvec.bv_offset, bvec.bv_len);
                         }
-                        kunmap(bvec->bv_page);
-                        pos += bvec->bv_len;
+                        kunmap(bvec.bv_page);
+                        pos += bvec.bv_len;
                 }
                 PDEBUG("bdtunch_read: transfer completed (finished)\n");
                 return count;
@@ -472,9 +472,9 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
 {
         struct bdtun *dev = (struct bdtun *)(filp->private_data);
         struct bdtun_bio_list_entry *entry;
-        struct bio_vec *bvec;
+        struct bio_vec bvec;
         unsigned long pos = 0;
-        int i;
+        struct bvec_iter i;
 
         PDEBUG("bdtunch_write: called\n");
 
@@ -497,10 +497,10 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                 mutex_lock(&dev->pending_bio_list_lock);
                 if (buf[0]) {
                         PDEBUG("bdtunch_write: user signaled failure, failing bio.\n");
-                        bio_endio(entry->bio, -EIO);
+                        bio_endio(entry->bio); // TODO: -EIO
                 } else {
                         PDEBUG("bdtunch_write: user signaled completion, completing bio.\n");
-                        bio_endio(entry->bio, 0);
+                        bio_endio(entry->bio); // TODO: 0
                 }
                 bdtun_update_iostat(dev, entry);
                 /* If we're completing the current bio, step ahead. */
@@ -514,21 +514,21 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
 
         /* 3. It's data */
         if (bio_data_dir(entry->bio) == READ &&
-            count == entry->bio->bi_size) {
+            count == bio_sectors(entry->bio)) {
                 PDEBUG("bdtunch_write: got data read request\n");
                 bio_for_each_segment(bvec, entry->bio, i) {
-                        void *kaddr = kmap(bvec->bv_page);
-                        if(copy_from_user(kaddr+bvec->bv_offset,
-                                          buf+pos, bvec->bv_len) != 0)
+                        void *kaddr = kmap(bvec.bv_page);
+                        if(copy_from_user(kaddr+bvec.bv_offset,
+                                          buf+pos, bvec.bv_len) != 0)
                         {
                                 PDEBUG("bdtunch_write: error copying data from user (finished)\n");
-                                kunmap(bvec->bv_page);
+                                kunmap(bvec.bv_page);
                                 /* We do not complete the bio here,
                                  * so the user process can try again */
                                 return -EIO;
                         }
-                        kunmap(bvec->bv_page);
-                        pos += bvec->bv_len;
+                        kunmap(bvec.bv_page);
+                        pos += bvec.bv_len;
                 }
                 return count;
         }
@@ -570,9 +570,9 @@ static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
         struct bdtun *dev = (struct bdtun *)filp->private_data;
         unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
         struct bdtun_bio_list_entry *entry;
-        struct bio_vec *bvec;
+        struct bio_vec bvec;
         int pos = 0;
-        int i;
+        struct bvec_iter i;
 
         PDEBUG("bdtunch_mmap: Offset isn't aligned: %ld\n", offset);
 
@@ -603,7 +603,7 @@ static int bdtunch_mmap(struct file *filp, struct vm_area_struct *vma)
         bio_for_each_segment(bvec, entry->bio, i) {
                 if (remap_pfn_range(vma,
                         vma->vm_start + PAGE_SIZE * pos,
-                        page_to_pfn(bvec->bv_page),
+                        page_to_pfn(bvec.bv_page),
                         PAGE_SIZE, PAGE_SHARED) < 0)
                 {
                         PDEBUG("bdtunch_mmap: remap_pfn_range failed (finished)\n");
