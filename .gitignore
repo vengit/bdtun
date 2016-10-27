@@ -30,6 +30,7 @@ install-sh
 missing
 ltmain.sh
 libtool
+compile
 
 config.guess
 config.sub
