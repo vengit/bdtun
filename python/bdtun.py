@@ -52,47 +52,44 @@ class CtrlReq(Union):
 
 class TxReq(Structure):
     _fields_ = [
+        ("id", c_void_p),
         ("flags", c_ulong),
         ("offset", c_ulong),
-        ("size", c_ulong),
-        ("buf", POINTER(c_char))
+        ("size", c_ulong)
     ]
+
+    def isRead(self):
+        return self.flags & 1 == 0;
+
+    def isWrite(self):
+        return self.flags & 1 == 1;
+
 
 class Bdtun:
     def __init__(self, name):
         self.name = name
         self.dev = None
         lib = CDLL("libbdtun.so")
-        
-        f = lib.bdtun_read_request
-        f.argtypes = [c_int, POINTER(TxReq)]
-        f.restype = c_int
-        Bdtun._f_bdtun_read_request = f
 
         f = lib.bdtun_complete_request
         f.argtypes = [c_int, POINTER(TxReq)]
         f.restype = c_int
         Bdtun._f_bdtun_complete_request = f
 
-        f = lib.bdtun_fail_request
-        f.argtypes = [c_int, POINTER(TxReq)]
-        f.restype = c_int
-        Bdtun._f_bdtun_fail_request = f
-
         f = lib.bdtun_create
         f.argtypes = [c_int, c_char_p, c_uint64, c_uint64, c_int]
         f.restype = c_int
         Bdtun._f_bdtun_create = f
 
-        f = lib.bdtun_resize
-        f.argtypes = [c_int, c_char_p, c_uint64]
+        f = lib.bdtun_fail_request
+        f.argtypes = [c_int, POINTER(TxReq)]
         f.restype = c_int
-        Bdtun._f_bdtun_resize = f
+        Bdtun._f_bdtun_fail_request = f
 
-        f = lib.bdtun_remove
-        f.argtypes = [c_int, c_char_p]
+        f = lib.bdtun_get_request_data
+        f.argtypes = [c_int, POINTER(TxReq), c_void_p]
         f.restype = c_int
-        Bdtun._f_bdtun_remove = f
+        Bdtun._f_bdtun_get_request_data = f
 
         f = lib.bdtun_info
         f.argtypes = [c_int, c_char_p, POINTER(Info)]
@@ -104,6 +101,31 @@ class Bdtun:
         f.restype = c_int
         Bdtun._f_bdtun_list = f
         
+        f = lib.bdtun_read_request
+        f.argtypes = [c_int, POINTER(TxReq)]
+        f.restype = c_int
+        Bdtun._f_bdtun_read_request = f
+
+        f = lib.bdtun_remove
+        f.argtypes = [c_int, c_char_p]
+        f.restype = c_int
+        Bdtun._f_bdtun_remove = f
+
+        f = lib.bdtun_resize
+        f.argtypes = [c_int, c_char_p, c_uint64]
+        f.restype = c_int
+        Bdtun._f_bdtun_resize = f
+
+        f = lib.bdtun_send_request_data
+        f.argtypes = [c_int, POINTER(TxReq), c_void_p]
+        f.restype = c_int
+        Bdtun._f_bdtun_send_request_data = f
+
+        f = lib.bdtun_set_request
+        f.argtypes = [c_int, POINTER(TxReq)]
+        f.restype = c_int
+        Bdtun._f_bdtun_set_request = f
+
     def open(self):
         self.dev = open("/dev/%s_tun" % self.name, 'w+')
         self.devno = self.dev.fileno()
@@ -111,11 +133,20 @@ class Bdtun:
     def close(self):
         self.dev.close()
 
+    def set_request(self, txreq):
+        return Bdtun._f_bdtun_set_request(c_int(self.devno), byref(txreq))
+
     def read_request(self, txreq):
         return Bdtun._f_bdtun_read_request(c_int(self.devno), byref(txreq))
 
     def complete_request(self, txreq):
         return Bdtun._f_bdtun_complete_request(c_int(self.devno), byref(txreq))
+
+    def get_request_data(self, txreq, buf):
+        return Bdtun._f_bdtun_get_request_data(c_int(self.devno), byref(txreq), byref(buf))
+
+    def send_request_data(self, txreq, buf):
+        return Bdtun._f_bdtun_send_request_data(c_int(self.devno), byref(txreq), byref(buf))
 
     @staticmethod
     def _getctrldev():

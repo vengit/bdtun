@@ -139,11 +139,14 @@ static void bdtun_do_add_disk(struct work_struct *work)
  * Request processing
  */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 2, 0)
-#   define MKREQ_RETTYPE int
-#   define MKREQ_RETVAL 0
+#       define MKREQ_RETTYPE int
+#       define MKREQ_RETVAL 0
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+#       define MKREQ_RETTYPE blk_qc_t
+#       define MKREQ_RETVAL BLK_QC_T_NONE;
 #else
-#   define MKREQ_RETTYPE void
-#   define MKREQ_RETVAL 
+#       define MKREQ_RETTYPE void
+#       define MKREQ_RETVAL
 #endif
 
 static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio)
@@ -159,7 +162,7 @@ static MKREQ_RETTYPE bdtun_make_request(struct request_queue *q, struct bio *bio
 
         if (!new) {
                 PDEBUG("bdtun_make_request: could not allocate bio list entry\n");
-                bio_endio(bio); // TODO: -EIO
+                bio_io_error(bio);
                 return MKREQ_RETVAL;
         }
 
@@ -403,6 +406,7 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
 
                 mutex_lock(&dev->pending_bio_list_lock);
                 list_move_tail(&entry->list, &dev->pending_bio_list);
+                dev->data_current_bio = &dev->pending_bio_list;
                 mutex_unlock(&dev->pending_bio_list_lock);
 
                 mutex_unlock(&dev->incoming_bio_list_lock);
@@ -410,11 +414,14 @@ static ssize_t bdtunch_read(struct file *filp, char *buf, size_t count, loff_t *
                 PDEBUG("bdtunch_read: header request served (finished)\n");
                 return count;
         }
-        // TODO: BUG?
-        //mutex_unlock(&dev->incoming_bio_list_lock);
 
         PDEBUG("bdtunch_read: got non-header request, getting current bio\n");
         mutex_lock(&dev->pending_bio_list_lock);
+        if (dev->data_current_bio == NULL) {
+            PDEBUG("bdtunch_read: data current bio is not set");
+            mutex_unlock(&dev->pending_bio_list_lock);
+            return -EIO;
+        }
         entry = list_entry(
                 dev->data_current_bio,
                 struct bdtun_bio_list_entry, list
@@ -489,6 +496,11 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
         }
 
         mutex_lock(&dev->pending_bio_list_lock);
+        if (dev->data_current_bio == NULL) {
+            mutex_unlock(&dev->pending_bio_list_lock);
+            PDEBUG("bdtunch_write: data current bio is not set");
+            return -EIO;
+        }
         entry = list_entry(dev->data_current_bio, struct bdtun_bio_list_entry, list);
         mutex_unlock(&dev->pending_bio_list_lock);
 
@@ -497,10 +509,10 @@ static ssize_t bdtunch_write(struct file *filp, const char *buf, size_t count, l
                 mutex_lock(&dev->pending_bio_list_lock);
                 if (buf[0]) {
                         PDEBUG("bdtunch_write: user signaled failure, failing bio.\n");
-                        bio_endio(entry->bio); // TODO: -EIO
+                        bio_io_error(entry->bio);
                 } else {
                         PDEBUG("bdtunch_write: user signaled completion, completing bio.\n");
-                        bio_endio(entry->bio); // TODO: 0
+                        bio_endio(entry->bio);
                 }
                 bdtun_update_iostat(dev, entry);
                 /* If we're completing the current bio, step ahead. */
@@ -934,14 +946,13 @@ static void bdtun_remove_dev(struct bdtun *dev)
 static int bdtun_remove_k(const char *name)
 {
         struct bdtun *dev;
-        //struct bdtun_bio_list_entry *entry;
 
         dev = bdtun_find_device(name);
 
         PDEBUG("bdtun_remove_k: called\n");
 
         if (dev == NULL) {
-                PDEBUG("bdtun_remove_k: error removing '%s': no such device (finished)\n", name);
+                PDEBUG("bdtun_remove_k: error removing '%s': no such device\n", name);
                 return -ENOENT;
         }
 
@@ -956,27 +967,15 @@ static int bdtun_remove_k(const char *name)
                 PDEBUG("bdtun_remove_k: won't remove: block device is in use (finished)");
                 return -EBUSY;
         }
+        PDEBUG("bdtun_remove_k: setting the device state to 'removing'");
         dev->removing = 1;
         spin_unlock(&dev->ru_lock);
 
-        // TODO: I don't think this is needed. Check.
-        /*mutex_lock(&dev->bio_list_lock);
-        while (!list_empty(&dev->bio_list)) {
-                entry = list_entry(dev->bio_list.next, struct bdtun_bio_list_entry, list);
-                bio_endio(entry->bio, -EIO);
-                list_del(dev->bio_list.next);
-                kfree(entry);
-        }
-        mutex_unlock(&dev->bio_list_lock);*/
-
         bdtun_remove_dev(dev);
-
-        /* Unlink and free device structure */
         list_del(&dev->list);
-
         kfree(dev);
 
-        PDEBUG("bdtun_remove_k: device removed from list (finished)\n");
+        PDEBUG("bdtun_remove_k: device is now really removed.\n");
 
         return 0;
 }
